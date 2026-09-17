@@ -62,3 +62,7 @@ Actions may have a delay of 0–3000 ms from casting. The Zod schema is the sour
 No analytics, accounts, or cloud saves. Data stays in the current browser/origin; clearing site data removes it. Export before clearing storage or moving devices. Local preview and GitHub Pages have separate storage; export/import to carry spells between them. If browser storage is full or unavailable, the editor reports the failure and leaves the previous saved tome intact.
 
 Fonts are self-hosted Fontsource distributions (their included open-font licenses apply). Lucide icons use the ISC license. The original manuscript illustration is in `public/fireball-study.png`; its generation prompt and provenance are in `docs/artwork.md`.
+
+## Working with coding agents
+
+See [AGENTS.md](AGENTS.md) for project preferences, the low-overhead spell workflow, and exact commit/publish commands. Completed changes are committed and pushed to `main` automatically; the GitHub Actions pipeline supplies the default test/build check.
