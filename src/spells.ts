@@ -128,6 +128,7 @@ export const starterSpells: Spell[] = [
     version: 1, id: 'wandering-meadow', title: 'Wandering Meadow', subtitle: 'Give the wilderness a foothold.', school: 'Verdancy', icon: 'leaf', color: '#8bb15d',
     description: 'Wake a handful of seeds between the stones. Fine blades unfurl, sway, and send runners into the neighboring cracks. Left alone, the meadow slowly claims more of the chamber in ragged, branching patches.',
     notes: 'Growth follows open floor around obstacles, never a perfect circle. Unmake clears roots and blades. Reset clears the meadow.', actions: [{ type: 'grass' }], blocks: [],
+  },
 ].map(s => spellSchema.parse(s));
 
 // Add release entries here so saved tomes receive new spells without restoring deleted ones.
