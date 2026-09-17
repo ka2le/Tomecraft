@@ -5,6 +5,9 @@ const delay = z.number().min(0).max(3000).default(0);
 const radius = z.number().min(5).max(500);
 const base = { delay };
 export const actionSchema = z.discriminatedUnion('type', [
+  z.object({ ...base, type: z.literal('water'), amount: z.number().min(100).max(3000).default(1100), duration: z.number().min(500).max(10000).default(3500) }).strict(),
+  z.object({ ...base, type: z.literal('expand'), depth: z.number().int().min(1).max(3).default(2) }).strict(),
+  z.object({ ...base, type: z.literal('grass'), radius: z.number().min(10).max(100).default(35) }).strict(),
   z.object({ ...base, type: z.literal('freeze'), radius, duration: z.number().min(500).max(60000).default(10000), color: color.default('#9cdeef') }).strict(),
   z.object({ ...base, type: z.literal('lightning'), radius: radius.default(140), chainRadius: radius.default(240), targets: z.number().int().min(1).max(20).default(5), damage: z.number().min(0).max(1000).default(25), color: color.default('#b9caff') }).strict(),
   z.object({ ...base, type: z.literal('cloud'), radius, duration: z.number().min(500).max(60000).default(12000) }).strict(),
@@ -111,12 +114,27 @@ export const starterSpells: Spell[] = [
     description: 'Gather a dense, black gaseous cloud. It hides what lies inside and blocks a creature’s view through it.\n\nOver twelve seconds, its curling edges slowly dissolve.',
     notes: 'Slimes lose sight of concealed food. Chain Lightning loses its path; an aimed Fireball can still pass through.', actions: [{ type: 'cloud', radius: 190, duration: 12000 }], blocks: [],
   },
+  {
+    version: 1, id: 'wellspring', title: 'Wellspring', subtitle: 'The stone remembers the river.', school: 'Conjuration', icon: 'wind', color: '#65b9cf',
+    description: 'Open a spring beneath the floor. Clear water wells up and spreads into a rippling pool, dividing around crates and finding its way through narrow gaps.',
+    notes: 'A shallow flood seen from above. Cast again to add water; walls and solid objects divert the current. Unmake dries the chosen patch.', actions: [{ type: 'water' }], blocks: [],
+  },
+  {
+    version: 1, id: 'unfold-chamber', title: 'Unfold the Chamber', subtitle: 'There is always another room.', school: 'Transmutation', icon: 'box', color: '#c2ae7c',
+    description: 'Touch the inside of a chamber wall and persuade the space beyond it to exist. Six new floor squares unfold outwards, opening a small alcove exactly where you cast.',
+    notes: 'Aim within half a floor square of an exposed edge. Works on new alcoves too. Reset restores the original room. The chamber accepts up to 240 extra squares.', actions: [{ type: 'expand', depth: 2 }], blocks: [],
+  },
+  {
+    version: 1, id: 'wandering-meadow', title: 'Wandering Meadow', subtitle: 'Give the wilderness a foothold.', school: 'Verdancy', icon: 'leaf', color: '#8bb15d',
+    description: 'Wake a handful of seeds between the stones. Fine blades unfurl, sway, and send runners into the neighboring cracks. Left alone, the meadow slowly claims more of the chamber in ragged, branching patches.',
+    notes: 'Growth follows open floor around obstacles, never a perfect circle. Unmake clears roots and blades. Reset clears the meadow.', actions: [{ type: 'grass' }], blocks: [],
 ].map(s => spellSchema.parse(s));
 
 // Add release entries here so saved tomes receive new spells without restoring deleted ones.
 export const starterReleases = [
   { revision: 2, ids: ['hungry-slime', 'rainbow-light', 'shrink', 'enlarge'] },
   { revision: 3, ids: ['ice-prison', 'chain-lightning', 'black-mist'] },
+  { revision: 4, ids: ['wellspring', 'unfold-chamber', 'wandering-meadow'] },
 ];
 export const starterRevision = starterReleases.at(-1)!.revision;
 
@@ -141,12 +159,15 @@ export const AUTHORING_PROMPT = `You are a spellwright for Tomecraft, a static R
 Spell format (all fields shown except blocks are required):
 { "version": 1, "id": "unique-kebab-case", "title": "Spell name", "subtitle": "A short poetic line", "school": "Evocation", "icon": "flame", "color": "#cf7045", "description": "Readable lore and what this spell does. Use \\n for paragraphs.", "notes": "A handwritten observation", "actions": [], "blocks": [] }
 
-Icons: flame, box, orbs, magnet, eraser, sparkles, wind, moon, snowflake, bolt, shield, leaf. Colors MUST be six-digit hex. School may be any short name. Use 1–24 actions. Every action has optional delay in milliseconds, 0–3000, measured from the moment of casting. Actions with equal delays run in array order. Every action is centered at the point the player taps, except projectiles which travel there from the caster near the chamber's south wall. The room is 1400 × 1000 world units.
+Icons: flame, box, orbs, magnet, eraser, sparkles, wind, moon, snowflake, bolt, shield, leaf. Colors MUST be six-digit hex. School may be any short name. Use 1–24 actions. Every action has optional delay in milliseconds, 0–3000, measured from the moment of casting. Actions with equal delays run in array order. Every action is centered at the point the player taps, except projectiles which travel there from the caster near the chamber's south wall. The room starts at 1400 × 1000 world units and can expand in 100-unit tiles.
 
 Actions (include "type" and only the listed properties):
+• water: amount 100–3000 (default 1100), duration 500–10000 ms (default 3500). Emits conserved shallow water over time. Depth pressure and damped flow spread it around solid objects and walls. Persists until removed or reset; up to 12000 total volume units and 16 sources.
+• expand: depth 1–3 floor tiles (default 2). Cast within 50 units of an exposed inside edge to add a three-tile-wide alcove outwards. Tiles are 100 units; at most 240 extra tiles. Invalid casts are rejected. Reset restores the room.
+• grass: radius 10–100 (default 35). Seeds a meadow that slowly spreads through irregular runners around obstacles. Individual blades mature and sway; up to 8000 tufts. Persists until removed or reset.
 • freeze: required radius 5–500, duration 500–60000 ms (default 10000), optional color (default #9cdeef). Encases intersecting physical objects and creatures in ice, locking position and stopping feeding. Shells slowly thaw; recasting refreshes duration. Frozen objects cannot be eaten or moved by forces, but can be resized or unmade. Fire projectiles melt 5000 ms of ice per hit; a remaining shell blocks blast damage and burning. Lightning damages creatures through ice without thawing it.
 • lightning: radius 5–500 (default 140, first target around aim point), chainRadius 5–500 (default 240, each subsequent jump), targets 1–20 (default 5), damage 0–1000 (default 25), optional color (default #b9caff). Instantly hits the nearest visible physical object, then chains to the nearest unhit object in range. Each creature takes damage once per cast. Non-creature objects conduct but take no damage. First arc starts at caster; clouds block every arc. Default damage is half Fireball damage. At most 100 visible arcs.
-• cloud: required radius 5–500, duration 500–60000 ms (default 12000). Dense black smoke hides objects and lights, blocks creature sight and lightning line of sight, and gradually shrinks to nothing. Concealment occupies the opaque inner 85% of the shrinking radius; the edge is wispy. Creatures wander when they cannot see food and cannot eat concealed food. Aimed projectiles, area spells, and collisions still work inside. At most 24 clouds.
+• cloud: required radius 5–500, duration 500–60000 ms (default 12000). Dense black smoke hides objects and lights, blocks creature sight and lightning line of sight, and gradually shrinks to nothing. Concealment follows the dense cores of overlapping, slowly rolling smoke lobes; the irregular edge is wispy. Creatures wander when they cannot see food and cannot eat concealed food. Aimed projectiles, area spells, and collisions still work inside. At most 24 clouds.
 • creature: summons a physical slime with a health bar. Optional color (default #8fc86a), size 10–65 (default 32), hp 1–1000 (default 100), speed 0–100 world units/second (default 24), consumeRadius 0–100 beyond its body (default 18), consumeTime 500–30000 ms per object (default 4000), lifetime 0–60000 ms (0 persists). Seeks the nearest visible, unfrozen non-creature object, slowly shrinks and consumes nearby objects of any material, and wanders if none remain. Does not eat creatures or walls. Projectile damage reduces health; zero health removes it. No regeneration. Default slime survives exactly one default Fireball and dies to the second hit.
 • light: optional color (default #ffb866), rainbow boolean (default false), required radius 5–500, duration 100–60000 ms (default 5000), flicker 0–2000 ms (default 650, included in duration). A stationary continuous glow, not particles. Rainbow cycles through all hues in five seconds; flicker fades it out at the end. At most 32 active lights. Resize also scales lights (radius clamped to 5–500); Unmake affects physical objects only.
 • resize: required radius 5–500 and factor 0.25–3. Immediately scales all physical objects and light glows intersecting the area, including creatures. Factors below 1 shrink, above 1 enlarge. Both collision geometry and appearance change; final size is clamped to 4–120 world units. Health, speed, and consumption settings stay unchanged. Repeated casts compound; changes persist.
@@ -154,7 +175,7 @@ Actions (include "type" and only the listed properties):
 • burst: required color; count 1–160, speed 0–12, size 1–20, lifetime 100–5000 ms, gravity -0.2–0.2. Creates glowing particles.
 • ring: required color and radius 5–500; duration 100–4000 ms. Animated circle; contracts when this spell contains a pull force, otherwise expands.
 • force: mode "pull" | "push" | "orbit"; required radius 5–500; strength 0.1–3. Applies an impulse to existing objects and creatures in the area. Frozen objects stay locked until thawed.
-• remove: required radius 5–500. Removes all conjured objects intersecting the area; never the walls.
+• remove: required radius 5–500. Removes all conjured objects, water, and grass intersecting the area; never the walls.
 • projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, damage 0–1000 (default 50, applied once to each creature in the blast), particles 10–160. Travels to target, explodes, pushes objects and destroys wooden objects in the blast. Each blast also melts 5000 ms of ice; any remaining shell prevents blast damage and wood burning. Other actions are delayed from cast time, NOT projectile arrival.
 
 Optional blocks, at most 8, render before or after the main content:
