@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Crosshair, Maximize, Minus, Plus, RotateCcw, Swords } from 'lucide-react';
+import { ChevronDown, Maximize, Minus, Plus, RotateCcw } from 'lucide-react';
 import { SpellEngine, ROOM } from './engine';
 import type { Point } from './engine';
 import type { Spell } from './spells';
@@ -9,7 +9,7 @@ import { useHold } from './hooks';
 type Camera = { x: number; y: number; zoom: number };
 function QuickSlot({ spell, index, active, onSelect, onAssign }: { spell: Spell; index: number; active: boolean; onSelect: () => void; onAssign: () => void }) {
   const {handlers, held} = useHold(onAssign);
-  return <div className={`quick-slot ${active ? 'selected' : ''}`} style={{'--spell-color': spell.color} as React.CSSProperties}><button className="slot-main" {...handlers} aria-pressed={active} aria-label={`Select ${spell.title}, quick slot ${index+1}`} onClick={() => { if(!held.current) onSelect(); }}><span className="slot-number">{index+1}</span><SpellIcon spell={spell} size={26}/><span className="slot-name">{spell.title}</span></button><button className="slot-assign" aria-label={`Assign quick slot ${index+1}`} onClick={onAssign}><ChevronDown size={13}/></button></div>;
+  return <div className={`quick-slot ${active ? 'selected' : ''}`} style={{'--spell-color': spell.color} as React.CSSProperties}><button className="slot-main" {...handlers} title={`${spell.title} · ${index+1}`} aria-pressed={active} aria-label={`Select ${spell.title}, quick slot ${index+1}`} onClick={() => { if(!held.current) onSelect(); }}><span className="slot-number">{index+1}</span><SpellIcon spell={spell} size={26}/></button><button className="slot-assign" aria-label={`Assign quick slot ${index+1}`} onClick={onAssign}><ChevronDown size={13}/></button></div>;
 }
 
 export default function Arena({ spells, slots, onSlots, activeId, onActive, visible, notify }: { spells: Spell[]; slots: string[]; onSlots: (slots: string[]) => void; activeId: string; onActive: (id: string) => void; visible: boolean; notify: (text: string) => void }) {
@@ -62,7 +62,7 @@ export default function Arena({ spells, slots, onSlots, activeId, onActive, visi
     window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);
   },[visible,slots,onActive]);
   return <section className="arena-view" aria-label="Practice chamber" hidden={!visible}>
-    <div className="arena-heading"><div><span className="eyebrow">THE PRACTICE CHAMBER</span><h1>A little room for possibility.</h1></div><span className="arena-stats"><span data-testid="object-count">{count}</span> objects <span>·</span> {castCount} casts</span></div>
+    <span className="sr-only"><span data-testid="object-count">{count}</span> objects · {castCount} casts</span>
     <div className="arena-window">
       <canvas ref={canvas} aria-label="Spell practice arena. Tap to cast, drag to pan, pinch or scroll to zoom. Arrow keys aim; Enter casts." tabIndex={0}
         onPointerDown={e=>{if(e.button!==0)return;setAssign(null);const p=local(e);canvas.current!.setPointerCapture(e.pointerId);pointers.current.set(e.pointerId,p);if(pointers.current.size===1)drag.current={start:p,last:p,moved:false,pinched:false,distance:0,mid:p};if(pointers.current.size===2){const [a,b]=[...pointers.current.values()];drag.current.pinched=true;drag.current.distance=Math.hypot(a.x-b.x,a.y-b.y);drag.current.mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};}}}
@@ -73,12 +73,10 @@ export default function Arena({ spells, slots, onSlots, activeId, onActive, visi
         onPointerCancel={e=>{pointers.current.delete(e.pointerId);drag.current.moved=true;drag.current.pinched=true;}}
         onPointerLeave={()=>{if(!pointers.current.size)target.current=null;}}
         onKeyDown={e=>{const directions:Record<string,Point>={ArrowLeft:{x:-30,y:0},ArrowRight:{x:30,y:0},ArrowUp:{x:0,y:-30},ArrowDown:{x:0,y:30}};if(directions[e.key]){e.preventDefault();const p=target.current||{x:700,y:490};target.current={x:Math.max(20,Math.min(1380,p.x+directions[e.key].x)),y:Math.max(20,Math.min(980,p.y+directions[e.key].y))};}if(e.key==='Enter'||e.key===' '){e.preventDefault();castAt(target.current||{x:700,y:490});}}}/>
-      <div className="chamber-label"><Swords size={15}/><span>CHAMBER I</span></div>
       <div className="arena-tools"><button aria-label="Zoom in" onClick={()=>zoomAt(1.2)}><Plus size={17}/></button><span data-testid="zoom-level">{zoom}%</span><button aria-label="Zoom out" onClick={()=>zoomAt(1/1.2)}><Minus size={17}/></button><span className="tool-divider"/><button aria-label="Fit chamber to view" onClick={()=>{camera.current={x:700,y:500,zoom:1};setZoom(100);}}><Maximize size={16}/></button><button aria-label="Reset chamber" title="Reset chamber" onClick={()=>{game.current?.clear();game.current?.seed();setCount(game.current?.objects.length||0);notify('The chamber has been restored.');}}><RotateCcw size={16}/></button></div>
-      <div className="active-spell-label" style={{color:active.color}}><SpellIcon spell={active} size={18}/><span>{active.title}</span><small>Tap the room to cast</small></div>
       <div className="arena-vignette"/>
     </div>
-    <div className="arena-bottom"><div className="arena-help"><Crosshair size={15}/><span>Tap to cast · Drag to explore<br/><small>Pinch or scroll to zoom</small></span></div><div className="quickbar" aria-label="Quick spell slots">{slots.map((id,i)=><QuickSlot key={i} spell={spells.find(s=>s.id===id)||spells[0]} index={i} active={active.id===id} onSelect={()=>{onActive(id);setAssign(null);}} onAssign={()=>setAssign(assign===i?null:i)}/>)}</div><span className="quickbar-help">Your practiced spells<br/><small>Keys 1–8 · Hold to change</small></span></div>
+    <div className="arena-bottom"><div className="quickbar" aria-label="Quick spell slots">{slots.map((id,i)=><QuickSlot key={i} spell={spells.find(s=>s.id===id)||spells[0]} index={i} active={active.id===id} onSelect={()=>{onActive(id);setAssign(null);}} onAssign={()=>setAssign(assign===i?null:i)}/>)}</div></div>
     {assign!==null&&<><button className="picker-backdrop" aria-label="Close spell picker" onClick={()=>setAssign(null)}/><div className="spell-picker" role="dialog" aria-label={`Choose a spell for slot ${assign+1}`}><div className="picker-heading">Bind to slot {assign+1}<button onClick={()=>setAssign(null)} aria-label="Close spell picker">×</button></div>{spells.map(s=><button key={s.id} className={slots[assign]===s.id?'bound':''} onClick={()=>{const next=[...slots];next[assign]=s.id;onSlots(next);onActive(s.id);setAssign(null);}}><span style={{color:s.color}}><SpellIcon spell={s} size={22}/></span><span>{s.title}<small>{s.school}</small></span>{slots[assign]===s.id&&<span className="bound-mark">✓</span>}</button>)}</div></>}
   </section>;
 }

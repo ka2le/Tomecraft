@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Pencil, WandSparkles, BookOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { SpellIcon } from './Icons';
 import { useHold, useMobile } from './hooks';
 import { runesFor } from './spells';
@@ -51,7 +51,7 @@ function Leaf({ spell, side, index, onEdit }: { spell: Spell; side: 'lore' | 'fo
   </article>;
 }
 
-export default function Book({ spells, selected, setSelected, onEdit, onCast }: { spells: Spell[]; selected: number; setSelected: (i: number) => void; onEdit: (s: EditSection) => void; onCast: () => void }) {
+export default function Book({ spells, selected, setSelected, onEdit }: { spells: Spell[]; selected: number; setSelected: (i: number) => void; onEdit: (s: EditSection) => void }) {
   const mobile = useMobile();
   const [leaf, setLeaf] = useState(0);
   const [turn, setTurn] = useState<'next' | 'previous' | null>(null);
@@ -95,7 +95,6 @@ export default function Book({ spells, selected, setSelected, onEdit, onCast }: 
       </div>
       <nav className="book-ribbons" aria-label="Spell bookmarks">{spells.slice(0, 7).map((s, i) => <button key={s.id} title={s.title} aria-label={`Open ${s.title}`} aria-current={selected === i ? 'page' : undefined} className={selected === i ? 'active' : ''} style={{ '--ribbon-color': s.color } as React.CSSProperties} onClick={() => { setSelected(i); setLeaf(0); }}><SpellIcon spell={s} size={21} /></button>)}</nav>
     </div>
-    <div className="book-navigation"><span className="hold-hint"><Pencil size={13} /> Hold any inscription to edit</span><div className="page-navigation"><button onClick={() => move(-1)} disabled={page === 0} aria-label="Previous page"><ChevronLeft size={19} /></button><span aria-live="polite">{String(page + 1).padStart(2, '0')}{!mobile && ` — ${String(page + 2).padStart(2, '0')}`}<i>/</i>{String(spells.length * 2).padStart(2, '0')}</span><button onClick={() => move(1)} disabled={page >= spells.length * 2 - (mobile ? 1 : 2)} aria-label="Next page"><ChevronRight size={19} /></button></div><button className="practice-link" onClick={onCast}><WandSparkles size={16} /> Try this spell <ChevronRight size={14} /></button></div>
-    <p className="mobile-book-hint"><BookOpen size={13} /> Swipe to turn · Hold an inscription to edit</p>
+    <nav className="book-navigation" aria-label="Turn pages"><button onClick={() => move(-1)} disabled={page === 0} aria-label="Previous page" title="Previous page"><ChevronLeft size={20}/></button><span className="sr-only" aria-live="polite">Page {page + 1} of {spells.length * 2}</span><button onClick={() => move(1)} disabled={page >= spells.length * 2 - (mobile ? 1 : 2)} aria-label="Next page" title="Next page"><ChevronRight size={20}/></button></nav>
   </section>;
 }
