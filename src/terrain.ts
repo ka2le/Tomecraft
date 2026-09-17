@@ -46,8 +46,20 @@ export class Terrain {
     this.walls=[];
     const tiles=[...this.tiles.values()];
     this.bounds={minX:Math.min(...tiles.map(t=>t.x))*100,minY:Math.min(...tiles.map(t=>t.y))*100,maxX:(Math.max(...tiles.map(t=>t.x))+1)*100,maxY:(Math.max(...tiles.map(t=>t.y))+1)*100};
+    const edges=new Map<string,{vertical:boolean;line:number;starts:number[]}>();
     for(const {x,y} of tiles) for(const [dx,dy] of directions) if(!this.tiles.has(key(x+dx,y+dy))) {
-      this.walls.push(Matter.Bodies.rectangle(x*100+50+dx*55,y*100+50+dy*55,dx?10:110,dy?10:110,{isStatic:true}));
+      const vertical=dx!==0,line=vertical?x*100+50+dx*55:y*100+50+dy*55,id=`${dx},${dy},${line}`;
+      const edge=edges.get(id)||{vertical,line,starts:[]};edge.starts.push((vertical?y:x)*100);edges.set(id,edge);
+    }
+    // Merge collinear tile edges into solid walls, avoiding seams and needless bodies.
+    for(const edge of edges.values()) {
+      const starts=edge.starts.sort((a,b)=>a-b);
+      for(let i=0;i<starts.length;i++) {
+        const start=starts[i];let end=start+100;
+        while(starts[i+1]===end){i++;end+=100;}
+        const center=(start+end)/2,length=end-start+10;
+        this.walls.push(Matter.Bodies.rectangle(edge.vertical?edge.line:center,edge.vertical?center:edge.line,edge.vertical?10:length,edge.vertical?length:10,{isStatic:true}));
+      }
     }
     Matter.Composite.add(this.world,this.walls);
   }
