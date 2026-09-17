@@ -58,7 +58,7 @@ export default function Arena({ spells, slots, onSlots, activeId, onActive, visi
   },[visible]);
   useEffect(()=>{
     if(!visible)return;
-    const onKey=(e:KeyboardEvent)=>{if(e.target instanceof HTMLElement&&/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(/^[1-4]$/.test(e.key)){onActive(slots[Number(e.key)-1]);setAssign(null);}if(e.key==='Escape')setAssign(null);};
+    const onKey=(e:KeyboardEvent)=>{if(e.target instanceof HTMLElement&&/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(/^[1-8]$/.test(e.key)){onActive(slots[Number(e.key)-1]);setAssign(null);}if(e.key==='Escape')setAssign(null);};
     window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);
   },[visible,slots,onActive]);
   return <section className="arena-view" aria-label="Practice chamber" hidden={!visible}>
@@ -78,7 +78,7 @@ export default function Arena({ spells, slots, onSlots, activeId, onActive, visi
       <div className="active-spell-label" style={{color:active.color}}><SpellIcon spell={active} size={18}/><span>{active.title}</span><small>Tap the room to cast</small></div>
       <div className="arena-vignette"/>
     </div>
-    <div className="arena-bottom"><div className="arena-help"><Crosshair size={15}/><span>Tap to cast · Drag to explore<br/><small>Pinch or scroll to zoom</small></span></div><div className="quickbar" aria-label="Quick spell slots">{slots.map((id,i)=><QuickSlot key={i} spell={spells.find(s=>s.id===id)||spells[0]} index={i} active={active.id===id} onSelect={()=>{onActive(id);setAssign(null);}} onAssign={()=>setAssign(assign===i?null:i)}/>)}</div><span className="quickbar-help">Your practiced spells<br/><small>Hold a slot to change it</small></span></div>
+    <div className="arena-bottom"><div className="arena-help"><Crosshair size={15}/><span>Tap to cast · Drag to explore<br/><small>Pinch or scroll to zoom</small></span></div><div className="quickbar" aria-label="Quick spell slots">{slots.map((id,i)=><QuickSlot key={i} spell={spells.find(s=>s.id===id)||spells[0]} index={i} active={active.id===id} onSelect={()=>{onActive(id);setAssign(null);}} onAssign={()=>setAssign(assign===i?null:i)}/>)}</div><span className="quickbar-help">Your practiced spells<br/><small>Keys 1–8 · Hold to change</small></span></div>
     {assign!==null&&<><button className="picker-backdrop" aria-label="Close spell picker" onClick={()=>setAssign(null)}/><div className="spell-picker" role="dialog" aria-label={`Choose a spell for slot ${assign+1}`}><div className="picker-heading">Bind to slot {assign+1}<button onClick={()=>setAssign(null)} aria-label="Close spell picker">×</button></div>{spells.map(s=><button key={s.id} className={slots[assign]===s.id?'bound':''} onClick={()=>{const next=[...slots];next[assign]=s.id;onSlots(next);onActive(s.id);setAssign(null);}}><span style={{color:s.color}}><SpellIcon spell={s} size={22}/></span><span>{s.title}<small>{s.school}</small></span>{slots[assign]===s.id&&<span className="bound-mark">✓</span>}</button>)}</div></>}
   </section>;
 }

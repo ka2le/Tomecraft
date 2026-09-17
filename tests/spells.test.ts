@@ -1,8 +1,51 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseSpell, runesFor, starterSpells } from '../src/spells';
 import { SpellEngine } from '../src/engine';
+import { loadLibrary, saveLibrary } from '../src/storage';
 
 const step = (world: SpellEngine, frames = 90) => { for(let i=0;i<frames;i++)world.update(); };
+describe('Living and persistent spells', () => {
+  const spell = (id: string) => starterSpells.find(s => s.id === id)!;
+  it('leaves a slime at half health after one fireball and kills it with two', () => {
+    const w = new SpellEngine(false); w.cast(spell('hungry-slime'), {x:700,y:500}); step(w,10);
+    w.cast(spell('fireball'), {...w.objects[0].position}); step(w,60);
+    expect(w.objects).toHaveLength(1); expect(w.objects[0].plugin.creature.hp).toBe(50);
+    w.cast(spell('fireball'), {...w.objects[0].position}); step(w,60);
+    expect(w.objects).toHaveLength(0); w.destroy();
+  });
+  it('slides toward food and consumes it gradually', () => {
+    const w = new SpellEngine(false); w.cast(spell('wooden-box'), {x:700,y:500}); step(w,30);
+    const crate = w.objects[0]; w.cast(spell('hungry-slime'), {x:600,y:500}); step(w,120);
+    expect(w.objects).toHaveLength(2); expect(crate.plugin.size).toBeLessThan(34);
+    expect(w.objects[1].position.x).toBeGreaterThan(600);
+    step(w,600); expect(w.objects).toHaveLength(1); expect(w.objects[0].plugin.creature).toBeDefined(); w.destroy();
+  });
+  it('creates a particle-free light that expires after five seconds', () => {
+    const w = new SpellEngine(false); w.cast(spell('rainbow-light'), {x:700,y:500}); step(w,240);
+    expect(w.lights).toHaveLength(1); expect(w.particles).toHaveLength(0);
+    step(w,62); expect(w.lights).toHaveLength(0); w.destroy();
+  });
+  it('resizes physical geometry and creatures without changing their health', () => {
+    const w = new SpellEngine(false); w.cast(spell('hungry-slime'), {x:700,y:500}); step(w,10);
+    const body = w.objects[0], area = body.area;
+    w.cast(spell('shrink'), {...body.position}); step(w,10);
+    expect(body.area).toBeCloseTo(area / 4); expect(body.plugin.size).toBe(16);
+    w.cast(spell('enlarge'), {...body.position}); step(w,10);
+    expect(body.area).toBeCloseTo(area); expect(body.plugin.creature.hp).toBe(100); w.destroy();
+  });
+});
+it('upgrades saved tomes to eight slots without replacing edits or restoring deleted additions', () => {
+  const edited = {...starterSpells[0], title: 'My Fireball'};
+  let saved = JSON.stringify({version:1, spells:[edited, ...starterSpells.slice(1,5)], slots:['iron-orbit','fireball','wooden-box','unmake']});
+  vi.stubGlobal('localStorage', {getItem:()=>saved, setItem:(_:string, value:string)=>{saved=value;}});
+  try {
+    const library = loadLibrary();
+    expect(library.spells).toHaveLength(9); expect(library.spells[0].title).toBe('My Fireball');
+    expect(library.slots).toEqual(['iron-orbit','fireball','wooden-box','unmake','hungry-slime','rainbow-light','shrink','enlarge']);
+    saveLibrary({...library, spells:library.spells.filter(s=>s.id!=='hungry-slime')});
+    expect(loadLibrary().spells.some(s=>s.id==='hungry-slime')).toBe(false);
+  } finally { vi.unstubAllGlobals(); }
+});
 describe('Spellscript boundary',()=>{
   it('accepts every starter spell as a pasted JSON code fence',()=>{for(const spell of starterSpells)expect(parseSpell('```json\n'+JSON.stringify(spell)+'\n```')).toEqual(spell);});
   it('rejects arbitrary code, unknown actions, excessive particles, and unsafe images',()=>{

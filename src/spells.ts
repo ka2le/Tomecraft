@@ -5,12 +5,15 @@ const delay = z.number().min(0).max(3000).default(0);
 const radius = z.number().min(5).max(500);
 const base = { delay };
 export const actionSchema = z.discriminatedUnion('type', [
+  z.object({ ...base, type: z.literal('creature'), color: color.default('#8fc86a'), size: z.number().min(10).max(65).default(32), hp: z.number().min(1).max(1000).default(100), speed: z.number().min(0).max(100).default(24), consumeRadius: z.number().min(0).max(100).default(18), consumeTime: z.number().min(500).max(30000).default(4000), lifetime: z.number().min(0).max(60000).default(0) }).strict(),
+  z.object({ ...base, type: z.literal('light'), color: color.default('#ffb866'), rainbow: z.boolean().default(false), radius, duration: z.number().min(100).max(60000).default(5000), flicker: z.number().min(0).max(2000).default(650) }).strict(),
+  z.object({ ...base, type: z.literal('resize'), radius, factor: z.number().min(0.25).max(3) }).strict(),
   z.object({ ...base, type: z.literal('spawn'), shape: z.enum(['box', 'circle']).default('box'), material: z.enum(['wood', 'metal', 'stone', 'crystal', 'ice']).default('wood'), count: z.number().int().min(1).max(20).default(1), size: z.number().min(5).max(65).default(28), spread: z.number().min(0).max(220).default(0), color: color.optional(), lifetime: z.number().min(0).max(60000).default(0) }).strict(),
   z.object({ ...base, type: z.literal('burst'), color, count: z.number().int().min(1).max(160).default(45), speed: z.number().min(0).max(12).default(3), size: z.number().min(1).max(20).default(3), lifetime: z.number().min(100).max(5000).default(900), gravity: z.number().min(-0.2).max(0.2).default(0) }).strict(),
   z.object({ ...base, type: z.literal('ring'), color, radius, duration: z.number().min(100).max(4000).default(700) }).strict(),
   z.object({ ...base, type: z.literal('force'), mode: z.enum(['pull', 'push', 'orbit']).default('pull'), radius, strength: z.number().min(0.1).max(3).default(1) }).strict(),
   z.object({ ...base, type: z.literal('remove'), radius }).strict(),
-  z.object({ ...base, type: z.literal('projectile'), color, speed: z.number().min(2).max(20).default(8), radius: z.number().min(20).max(220).default(110), power: z.number().min(0.1).max(3).default(1), particles: z.number().int().min(10).max(160).default(75) }).strict(),
+  z.object({ ...base, type: z.literal('projectile'), color, speed: z.number().min(2).max(20).default(8), radius: z.number().min(20).max(220).default(110), power: z.number().min(0.1).max(3).default(1), damage: z.number().min(0).max(1000).default(50), particles: z.number().int().min(10).max(160).default(75) }).strict(),
 ]);
 export const iconNames = ['flame', 'box', 'orbs', 'magnet', 'eraser', 'sparkles', 'wind', 'moon', 'snowflake', 'bolt', 'shield', 'leaf'] as const;
 const imageSource = z.string().max(1400000).refine(v => /^https?:\/\//i.test(v) || /^data:image\/(png|jpeg|webp|gif);base64,/i.test(v), 'Use an https image URL or upload a PNG, JPEG, WebP, or GIF');
@@ -70,6 +73,26 @@ export const starterSpells: Spell[] = [
     notes: 'The chamber itself is quite stubborn and will remain. Your conjurations are considerably more agreeable.',
     actions: [{ type: 'ring', color: '#9dc9ac', radius: 155, duration: 850 }, { type: 'remove', radius: 155, delay: 160 }, { type: 'burst', color: '#b9d5be', count: 65, speed: 2, lifetime: 1200, gravity: -0.015, delay: 160 }], blocks: [],
   },
+  {
+    version: 1, id: 'hungry-slime', title: 'Hungry Slime', subtitle: 'A small, patient appetite.', school: 'Conjuration', icon: 'leaf', color: '#8fc86a',
+    description: 'Call a jelly-green companion into the chamber. It slides toward nearby objects and slowly digests whatever it touches.\n\nIts appetite extends to wood, metal, stone, crystal, and ice.',
+    notes: 'The little bar is its health. One Fireball leaves it half alive; a second finishes the job. Fellow slimes are off the menu.', actions: [{ type: 'creature' }], blocks: [],
+  },
+  {
+    version: 1, id: 'rainbow-light', title: 'Prismatic Wisp', subtitle: 'Five seconds of borrowed color.', school: 'Illumination', icon: 'sparkles', color: '#c39be9',
+    description: 'Suspend a soft light in the air. Its glow flows through the rainbow, bathing the stone in shifting color.\n\nAfter five seconds, it flickers into darkness.',
+    notes: 'A continuous glow, without a single wandering spark.', actions: [{ type: 'light', rainbow: true, radius: 150, duration: 5000, flicker: 650 }], blocks: [],
+  },
+  {
+    version: 1, id: 'shrink', title: 'Diminish', subtitle: 'A little less of everything.', school: 'Transmutation', icon: 'moon', color: '#89bcd1',
+    description: 'Halve the size of nearby conjurations, including slimes. Their physical shape shrinks along with them.',
+    notes: 'Small creatures retain their health and appetite. Repeated casting has its limits.', actions: [{ type: 'resize', radius: 130, factor: 0.5 }, { type: 'ring', color: '#89bcd1', radius: 130, duration: 650 }], blocks: [],
+  },
+  {
+    version: 1, id: 'enlarge', title: 'Magnify', subtitle: 'Make room for possibility.', school: 'Transmutation', icon: 'orbs', color: '#d4b574',
+    description: 'Double the size of nearby conjurations, including slimes. What grows in appearance grows in physical presence, too.',
+    notes: 'A larger slime is still two Fireballs away from oblivion. No conjuration can grow beyond the chamber’s limits.', actions: [{ type: 'resize', radius: 130, factor: 2 }, { type: 'ring', color: '#d4b574', radius: 130, duration: 650 }], blocks: [],
+  },
 ].map(s => spellSchema.parse(s));
 
 const runeAlphabet = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛈᛇᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
@@ -96,12 +119,15 @@ Spell format (all fields shown except blocks are required):
 Icons: flame, box, orbs, magnet, eraser, sparkles, wind, moon, snowflake, bolt, shield, leaf. Colors MUST be six-digit hex. School may be any short name. Use 1–24 actions. Every action has optional delay in milliseconds, 0–3000, measured from the moment of casting. Actions with equal delays run in array order. Every action is centered at the point the player taps, except projectiles which travel there from the caster near the chamber's south wall. The room is 1400 × 1000 world units.
 
 Actions (include "type" and only the listed properties):
+• creature: summons a physical slime with a health bar. Optional color (default #8fc86a), size 10–65 (default 32), hp 1–1000 (default 100), speed 0–100 world units/second (default 24), consumeRadius 0–100 beyond its body (default 18), consumeTime 500–30000 ms per object (default 4000), lifetime 0–60000 ms (0 persists). Seeks the nearest non-creature object, slowly shrinks and consumes nearby objects of any material, and wanders if none remain. Does not eat creatures or walls. Projectile damage reduces health; zero health removes it. No regeneration. Default slime survives exactly one default Fireball and dies to the second hit.
+• light: optional color (default #ffb866), rainbow boolean (default false), required radius 5–500, duration 100–60000 ms (default 5000), flicker 0–2000 ms (default 650, included in duration). A stationary continuous glow, not particles. Rainbow cycles through all hues in five seconds; flicker fades it out at the end. At most 32 active lights. Unmake and resize affect physical objects, not lights.
+• resize: required radius 5–500 and factor 0.25–3. Immediately scales all physical objects intersecting the area, including creatures. Factors below 1 shrink, above 1 enlarge. Both collision geometry and appearance change; final size is clamped to 4–120 world units. Health, speed, and consumption settings stay unchanged. Repeated casts compound; changes persist.
 • spawn: shape "box" | "circle" (default box), material "wood" | "metal" | "stone" | "crystal" | "ice", count 1–20, size 5–65 (circle radius / half box width), spread 0–220, optional color, lifetime 0–60000 ms (0 persists). All spawned objects have physical collisions; wood burns on fireball impact.
 • burst: required color; count 1–160, speed 0–12, size 1–20, lifetime 100–5000 ms, gravity -0.2–0.2. Creates glowing particles.
 • ring: required color and radius 5–500; duration 100–4000 ms. Animated circle; contracts when this spell contains a pull force, otherwise expands.
 • force: mode "pull" | "push" | "orbit"; required radius 5–500; strength 0.1–3. Applies an impulse to existing objects in the area.
 • remove: required radius 5–500. Removes all conjured objects intersecting the area; never the walls.
-• projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, particles 10–160. Travels to target, explodes, pushes objects and destroys wooden objects in the blast. Other actions are delayed from cast time, NOT projectile arrival.
+• projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, damage 0–1000 (default 50, applied once to each creature in the blast), particles 10–160. Travels to target, explodes, pushes objects and destroys wooden objects in the blast. Other actions are delayed from cast time, NOT projectile arrival.
 
 Optional blocks, at most 8, render before or after the main content:
 { "id": "unique-note", "kind": "text", "content": "Extra observation", "placement": "before" | "after" }
