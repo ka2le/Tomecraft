@@ -1,6 +1,8 @@
 import Matter from 'matter-js';
 import type { Action, Spell } from './spells';
 import { Terrain } from './terrain';
+import { burnFuel, drawFlame, drawIce, newFuel } from './elements';
+import type { Fuel } from './elements';
 
 const { Engine, Bodies, Body, Composite } = Matter;
 export const ROOM = { width: 1400, height: 1000 };
@@ -11,7 +13,7 @@ type Ring = Point & { radius: number; life: number; total: number; color: string
 type Projectile = Point & { target: Point; action: Extract<Action, {type: 'projectile'}> };
 type ScheduledCast = { target: Point; spell: Spell; started: number; remaining: Action[] };
 type Creature = { hp: number; maxHp: number; speed: number; consumeRadius: number; consumeTime: number; meals: Map<number, { elapsed: number; size: number }> };
-type ObjectData = { material: string; color: string; size: number; expires: number; shape: string; creature?: Creature; frozen?: { remaining: number; total: number; color: string } };
+type ObjectData = { material: string; color: string; size: number; expires: number; shape: string; creature?: Creature; fuel?: Fuel; frozen?: { remaining: number; total: number; color: string } };
 type Glow = Point & { action: Extract<Action, {type: 'light'}>; started: number };
 type Cloud = Point & { radius: number; duration: number; started: number };
 type Arc = { points: Point[]; color: string; life: number };
@@ -32,6 +34,7 @@ export class SpellEngine {
   time = 0;
   lastCast = -1000;
   casts = 0;
+  private fireClock = 0;
   constructor(seed = true) {
     if (seed) this.seed();
   }
@@ -81,6 +84,7 @@ export class SpellEngine {
     }
   }
   force(target: Point, radius: number, strength: number, mode: 'pull' | 'push' | 'orbit') {
+    this.terrain.force(target,radius,strength,mode);
     for (const body of this.objects) {
       if (body.isStatic) continue;
       const dx = target.x - body.position.x, dy = target.y - body.position.y, distance = Math.hypot(dx, dy);
@@ -93,13 +97,13 @@ export class SpellEngine {
       Body.setVelocity(body, {x: clamp(body.velocity.x + vx * power, -20, 20), y: clamp(body.velocity.y + vy * power, -20, 20)});
     }
   }
-  remove(target: Point, radius: number, woodOnly = false) {
-    if(!woodOnly) this.terrain.remove(target,radius);
+  remove(target: Point, radius: number) {
+    this.terrain.remove(target,radius);
     for (const body of this.objects) {
       const data = body.plugin as ObjectData;
       const nearest = { x: clamp(target.x, body.bounds.min.x, body.bounds.max.x), y: clamp(target.y, body.bounds.min.y, body.bounds.max.y) };
-      if (Math.hypot(nearest.x - target.x, nearest.y - target.y) <= radius && (!woodOnly || (data.material === 'wood' && !data.frozen))) {
-        this.burst(body.position, woodOnly ? '#df9858' : data.color, 14, 2.5, 3, 800);
+      if (Math.hypot(nearest.x - target.x, nearest.y - target.y) <= radius) {
+        this.burst(body.position, data.color, 14, 2.5, 3, 800);
         Composite.remove(this.engine.world, body);
       }
     }
@@ -110,6 +114,7 @@ export class SpellEngine {
       case 'expand': this.terrain.expand(target,action.depth); break;
       case 'grass': this.terrain.plant(target,action.radius,this.objects); break;
       case 'freeze':
+        this.terrain.freeze(target,action.radius,action.duration);
         for (const body of this.objects) if (this.inRange(body, target, action.radius)) {
           (body.plugin as ObjectData).frozen = { remaining: action.duration, total: action.duration, color: action.color };
           if (!body.isStatic) Body.setStatic(body, true);
@@ -161,6 +166,50 @@ export class SpellEngine {
     if (!data.frozen) return;
     data.frozen.remaining -= amount;
     if (data.frozen.remaining <= 0) { delete data.frozen; Body.setStatic(body,false); Matter.Sleeping.set(body,false); }
+  }
+  bodyWet(body: Matter.Body) {
+    if(this.terrain.wet(body.position))return true;
+    const vertices=body.vertices;
+    for(let i=0;i<vertices.length;i++) {
+      const a=vertices[i],b=vertices[(i+1)%vertices.length],steps=Math.ceil(Math.hypot(b.x-a.x,b.y-a.y)/8);
+      for(let j=0;j<=steps;j++) {
+        const x=a.x+(b.x-a.x)*j/steps,y=a.y+(b.y-a.y)*j/steps,dx=x-body.position.x,dy=y-body.position.y,d=Math.hypot(dx,dy)||1;
+        if(this.terrain.wet({x:x+dx/d*6,y:y+dy/d*6}))return true;
+      }
+    }
+    return false;
+  }
+  ignite(body: Matter.Body) {
+    const data=body.plugin as ObjectData;
+    if(data.material==='wood')burnFuel(data.fuel ||= newFuel(),600,1,this.bodyWet(body),!!data.frozen,9000);
+    if(data.material==='ice'&&!data.frozen)this.melt(body,.3);
+  }
+  melt(body: Matter.Body, fraction: number) {
+    const data=body.plugin as ObjectData,amount=data.size*data.size*fraction*.12;
+    const p={...body.position};
+    if(data.size*(1-fraction)<5)Composite.remove(this.engine.world,body);
+    else this.resize(body,data.size*(1-fraction));
+    // Meltwater forms just outside the remaining solid ice.
+    this.terrain.addWater({x:p.x+data.size+8,y:p.y},Math.max(2,amount),500);
+  }
+  updateFire(dt: number) {
+    this.fireClock+=dt;if(this.fireClock<100)return;
+    const step=this.fireClock,objects=this.objects;this.fireClock=0;
+    const sources=objects.filter(b=>(b.plugin as ObjectData).fuel?.burning&&!this.bodyWet(b)).map(b=>{
+      const data=b.plugin as ObjectData;return {...b.position,radius:data.size+35,strength:data.frozen?.18:2};
+    });
+    this.terrain.updateFire(step,sources);
+    for(const body of objects) {
+      const data=body.plugin as ObjectData,heat=this.terrain.heatAt(body.position,data.size);
+      if(data.frozen&&heat>0)this.thaw(body,heat*step);
+      if(data.creature&&!data.frozen&&heat>0&&!this.bodyWet(body))this.damage(body,heat*step*.006);
+      if(data.material==='ice'&&!data.frozen&&heat>0){this.melt(body,Math.min(.05,heat*step/25000));continue;}
+      if(data.material!=='wood')continue;
+      const fuel=data.fuel ||= newFuel();
+      if(data.frozen&&fuel.burning)this.thaw(body,step*.5);
+      burnFuel(fuel,step,heat,this.bodyWet(body),!!data.frozen,9000);
+      if(fuel.consumed>=1){this.burst(body.position,'#84715c',18,1.2,3,1100);Composite.remove(this.engine.world,body);}
+    }
   }
   damage(body: Matter.Body, amount: number) {
     const data=body.plugin as ObjectData;
@@ -234,6 +283,7 @@ export class SpellEngine {
     this.updateCreatures(dt);
     Engine.update(this.engine, dt);
     this.terrain.update(dt,this.objects);
+    this.updateFire(dt);
     this.lights = this.lights.filter(l => this.time - l.started < l.action.duration);
     for (const body of this.objects) { const data = body.plugin as ObjectData; if (data.expires && this.time >= data.expires) { this.burst(body.position, data.color, 10, 1, 2, 500); Composite.remove(this.engine.world, body); } }
     for (const p of this.projectiles) {
@@ -244,13 +294,14 @@ export class SpellEngine {
         this.burst(p.target, '#fff2b5', 18, 5, 3, 600);
         this.rings.push({...p.target, color:p.action.color, radius:p.action.radius, life:600, total:600, inward:false});
         this.force(p.target, p.action.radius, p.action.power, 'push');
+        this.terrain.ignite(p.target,p.action.radius);
         for (const body of this.objects) {
           const data = body.plugin as ObjectData;
           if (!this.inRange(body,p.target,p.action.radius)) continue;
           this.thaw(body,5000);
           if (!data.frozen) this.damage(body,p.action.damage);
+          this.ignite(body);
         }
-        this.remove(p.target, p.action.radius * .85, true);
       } else { p.x += dx/distance * step; p.y += dy/distance * step; this.burst(p, p.action.color, 3, .8, 5, 500); }
     }
     this.projectiles = this.projectiles.filter(p => Math.hypot(p.x-p.target.x,p.y-p.target.y) > .1);
@@ -283,13 +334,21 @@ export class SpellEngine {
       }
       else if(data.shape==='circle'){const g=ctx.createRadialGradient(-data.size*.35,-data.size*.4,1,0,0,data.size);g.addColorStop(0,'#f2f1da');g.addColorStop(.3,data.color);g.addColorStop(1,'#424d4a');ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,data.size,0,Math.PI*2);ctx.fill();ctx.stroke();}
       else {const s=data.size;ctx.fillRect(-s,-s,s*2,s*2);ctx.strokeRect(-s,-s,s*2,s*2);ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.strokeStyle='#372b1e88';ctx.lineWidth=1;for(let i=-s+7;i<s;i+=12){ctx.beginPath();ctx.moveTo(i,-s);ctx.lineTo(i,s);ctx.stroke();}ctx.strokeStyle=data.material==='wood'?'#b2996d':'#dddbce55';ctx.lineWidth=5;ctx.strokeRect(-s+5,-s+5,s*2-10,s*2-10);if(data.material==='wood'){ctx.beginPath();ctx.moveTo(-s+6,-s+6);ctx.lineTo(s-6,s-6);ctx.stroke();}}
-      if(data.frozen){
-        const ice=data.frozen, fraction=ice.remaining/ice.total, s=data.size+4+10*fraction;
-        ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.fillStyle=ice.color;ctx.globalAlpha=.15+.35*fraction;
-        ctx.beginPath();ctx.moveTo(-s,-s*.7);ctx.lineTo(-s*.6,-s);ctx.lineTo(s*.7,-s);ctx.lineTo(s,-s*.5);ctx.lineTo(s,s*.7);ctx.lineTo(s*.5,s);ctx.lineTo(-s*.7,s);ctx.lineTo(-s,s*.5);ctx.closePath();ctx.fill();ctx.globalAlpha=.4+.5*fraction;ctx.strokeStyle=ice.color;ctx.lineWidth=2;ctx.stroke();
-        ctx.beginPath();ctx.moveTo(-s*.6,-s);ctx.lineTo(-s*.25,-s*.2);ctx.lineTo(-s,s*.5);ctx.moveTo(s,-s*.5);ctx.lineTo(s*.15,s*.15);ctx.lineTo(s*.5,s);ctx.stroke();ctx.globalAlpha=1;
+      if(data.fuel?.consumed){
+        ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.fillStyle=`rgba(24,20,17,${Math.min(.88,data.fuel.consumed)})`;
+        if(data.shape==='circle'){ctx.beginPath();ctx.arc(0,0,data.size,0,Math.PI*2);ctx.fill();}
+        else ctx.fillRect(-data.size,-data.size,data.size*2,data.size*2);
+      }
+      if(data.frozen||data.material==='ice'){
+        const a=data.creature?0:-body.angle,cos=Math.cos(a),sin=Math.sin(a);
+        const vertices=body.vertices.map(v=>{const x=v.x-body.position.x,y=v.y-body.position.y;return{x:x*cos-y*sin,y:x*sin+y*cos};});
+        drawIce(ctx,vertices,data.frozen?data.frozen.remaining/data.frozen.total:1,body.id);
       }
       ctx.restore();
+      if(data.fuel?.burning){
+        const scale=data.frozen?.3:1;
+        for(let i=0;i<3;i++)drawFlame(ctx,body.position.x+(i-1)*data.size*.6,body.position.y+data.size*.25,Math.max(8,data.size*.95)*scale,this.time,body.id+i*.3,reducedMotion);
+      }
     }
     for(const r of this.rings){const progress=1-r.life/r.total;const radius=r.radius*(r.inward?1-progress:Math.sin(progress*Math.PI/2));ctx.globalAlpha=(1-progress)*.7;ctx.strokeStyle=r.color;ctx.lineWidth=2+4*(1-progress);ctx.beginPath();ctx.arc(r.x,r.y,Math.max(1,radius),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=.05*(1-progress);ctx.fillStyle=r.color;ctx.fill();}ctx.globalAlpha=1;
     ctx.globalCompositeOperation='lighter';

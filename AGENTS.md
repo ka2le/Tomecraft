@@ -48,6 +48,7 @@ Do not use `npm publish`, switch hosting providers, or introduce another deploym
 
 ## Adding spells efficiently
 
+- Design spells as a cohesive simulation: consider their interactions with existing materials and effects, not just their isolated appearance. Reuse the shared elemental rules in `src/elements.ts` and terrain behavior in `src/terrain.ts`: water quenches and blocks fire, ice slows combustion and freezes water/grass, and fire spreads through fuel before consuming it. Preserve these interactions when adding or changing spells.
 - `src/spells.ts` contains `starterSpells`, `spellSchema`, `actionSchema`, `starterRevision`, `starterReleases`, and the copyable `AUTHORING_PROMPT` contract. Read the relevant current definitions rather than rediscovering the whole project.
 - Compose existing actions whenever they express the requested spell. Each spell needs a unique stable lowercase/hyphen ID, evocative title/subtitle, school, supported icon, hex color, lore, notes, actions, and blocks.
 - When shipping new starter spells, increment `starterRevision` and append a `starterReleases` entry containing the new IDs. `src/storage.ts` uses these releases to add missing spells to existing saved libraries, up to the 100-spell limit. Adding only to `starterSpells` will not reliably deliver spells to returning users.
