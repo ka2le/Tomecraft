@@ -81,7 +81,7 @@ export default function Book({ spells, selected, setSelected, onEdit, onCast }: 
   });
   return <section className="tome-view" aria-label="Your spellbook">
     <div className="book-wrapper">
-      <div className={`book-shell ${turn ? `turn-${turn}` : ''}`} onPointerDown={e => { if (e.button === 0 && !(e.target as HTMLElement).closest('button')) touch.current = {x: e.clientX, y: e.clientY, time: Date.now()}; }} onPointerUp={e => {
+      <div className={`book-shell ${turn ? `turn-${turn}` : ''}`} onDragStart={e => e.preventDefault()} onPointerDown={e => { if (e.button === 0 && !(e.target as HTMLElement).closest('button')) touch.current = {x: e.clientX, y: e.clientY, time: Date.now()}; }} onPointerUp={e => {
         const start = touch.current; touch.current = null;
         if (!start || Date.now() - start.time > 1800) return;
         const dx = e.clientX - start.x, dy = e.clientY - start.y;
