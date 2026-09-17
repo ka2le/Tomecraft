@@ -5,6 +5,9 @@ const delay = z.number().min(0).max(3000).default(0);
 const radius = z.number().min(5).max(500);
 const base = { delay };
 export const actionSchema = z.discriminatedUnion('type', [
+  z.object({ ...base, type: z.literal('freeze'), radius, duration: z.number().min(500).max(60000).default(10000), color: color.default('#9cdeef') }).strict(),
+  z.object({ ...base, type: z.literal('lightning'), radius: radius.default(140), chainRadius: radius.default(240), targets: z.number().int().min(1).max(20).default(5), damage: z.number().min(0).max(1000).default(25), color: color.default('#b9caff') }).strict(),
+  z.object({ ...base, type: z.literal('cloud'), radius, duration: z.number().min(500).max(60000).default(12000) }).strict(),
   z.object({ ...base, type: z.literal('creature'), color: color.default('#8fc86a'), size: z.number().min(10).max(65).default(32), hp: z.number().min(1).max(1000).default(100), speed: z.number().min(0).max(100).default(24), consumeRadius: z.number().min(0).max(100).default(18), consumeTime: z.number().min(500).max(30000).default(4000), lifetime: z.number().min(0).max(60000).default(0) }).strict(),
   z.object({ ...base, type: z.literal('light'), color: color.default('#ffb866'), rainbow: z.boolean().default(false), radius, duration: z.number().min(100).max(60000).default(5000), flicker: z.number().min(0).max(2000).default(650) }).strict(),
   z.object({ ...base, type: z.literal('resize'), radius, factor: z.number().min(0.25).max(3) }).strict(),
@@ -85,15 +88,37 @@ export const starterSpells: Spell[] = [
   },
   {
     version: 1, id: 'shrink', title: 'Diminish', subtitle: 'A little less of everything.', school: 'Transmutation', icon: 'moon', color: '#89bcd1',
-    description: 'Halve the size of nearby conjurations, including slimes. Their physical shape shrinks along with them.',
+    description: 'Halve the size of nearby conjurations, including slimes and glowing lights. Physical objects shrink in substance; lights draw their glow inward.',
     notes: 'Small creatures retain their health and appetite. Repeated casting has its limits.', actions: [{ type: 'resize', radius: 130, factor: 0.5 }, { type: 'ring', color: '#89bcd1', radius: 130, duration: 650 }], blocks: [],
   },
   {
     version: 1, id: 'enlarge', title: 'Magnify', subtitle: 'Make room for possibility.', school: 'Transmutation', icon: 'orbs', color: '#d4b574',
-    description: 'Double the size of nearby conjurations, including slimes. What grows in appearance grows in physical presence, too.',
+    description: 'Double the size of nearby conjurations, including slimes and glowing lights. Physical objects grow in substance; lights spread their glow farther.',
     notes: 'A larger slime is still two Fireballs away from oblivion. No conjuration can grow beyond the chamber’s limits.', actions: [{ type: 'resize', radius: 130, factor: 2 }, { type: 'ring', color: '#d4b574', radius: 130, duration: 650 }], blocks: [],
   },
+  {
+    version: 1, id: 'ice-prison', title: 'Ice Prison', subtitle: 'Hold that thought.', school: 'Abjuration', icon: 'snowflake', color: '#9cdeef',
+    description: 'Seal nearby objects and creatures in still, crystalline ice. For ten seconds, nothing within can move or feed.\n\nThe prison thins as it thaws. Fire melts it faster.',
+    notes: 'Each Fireball melts five seconds of ice. A surviving shell shields its contents from that blast.', actions: [{ type: 'freeze', radius: 155, duration: 10000 }], blocks: [],
+  },
+  {
+    version: 1, id: 'chain-lightning', title: 'Chain Lightning', subtitle: 'One bright thought leads to another.', school: 'Evocation', icon: 'bolt', color: '#b9caff',
+    description: 'A bolt leaps to the nearest visible target, then arcs through as many as four more nearby objects or creatures.\n\nEach creature takes twenty-five damage: half a Fireball’s bite.',
+    notes: 'Each target is struck once per cast. Four hits defeat a healthy slime. The chain cannot see through black mist.', actions: [{ type: 'lightning', targets: 5, damage: 25 }], blocks: [],
+  },
+  {
+    version: 1, id: 'black-mist', title: 'Black Mist', subtitle: 'Let the room forget.', school: 'Illusion', icon: 'wind', color: '#777184',
+    description: 'Gather a dense, black gaseous cloud. It hides what lies inside and blocks a creature’s view through it.\n\nOver twelve seconds, its curling edges slowly dissolve.',
+    notes: 'Slimes lose sight of concealed food. Chain Lightning loses its path; an aimed Fireball can still pass through.', actions: [{ type: 'cloud', radius: 190, duration: 12000 }], blocks: [],
+  },
 ].map(s => spellSchema.parse(s));
+
+// Add release entries here so saved tomes receive new spells without restoring deleted ones.
+export const starterReleases = [
+  { revision: 2, ids: ['hungry-slime', 'rainbow-light', 'shrink', 'enlarge'] },
+  { revision: 3, ids: ['ice-prison', 'chain-lightning', 'black-mist'] },
+];
+export const starterRevision = starterReleases.at(-1)!.revision;
 
 const runeAlphabet = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛈᛇᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
 export function runesFor(spell: Spell): string[] {
@@ -119,15 +144,18 @@ Spell format (all fields shown except blocks are required):
 Icons: flame, box, orbs, magnet, eraser, sparkles, wind, moon, snowflake, bolt, shield, leaf. Colors MUST be six-digit hex. School may be any short name. Use 1–24 actions. Every action has optional delay in milliseconds, 0–3000, measured from the moment of casting. Actions with equal delays run in array order. Every action is centered at the point the player taps, except projectiles which travel there from the caster near the chamber's south wall. The room is 1400 × 1000 world units.
 
 Actions (include "type" and only the listed properties):
-• creature: summons a physical slime with a health bar. Optional color (default #8fc86a), size 10–65 (default 32), hp 1–1000 (default 100), speed 0–100 world units/second (default 24), consumeRadius 0–100 beyond its body (default 18), consumeTime 500–30000 ms per object (default 4000), lifetime 0–60000 ms (0 persists). Seeks the nearest non-creature object, slowly shrinks and consumes nearby objects of any material, and wanders if none remain. Does not eat creatures or walls. Projectile damage reduces health; zero health removes it. No regeneration. Default slime survives exactly one default Fireball and dies to the second hit.
-• light: optional color (default #ffb866), rainbow boolean (default false), required radius 5–500, duration 100–60000 ms (default 5000), flicker 0–2000 ms (default 650, included in duration). A stationary continuous glow, not particles. Rainbow cycles through all hues in five seconds; flicker fades it out at the end. At most 32 active lights. Unmake and resize affect physical objects, not lights.
-• resize: required radius 5–500 and factor 0.25–3. Immediately scales all physical objects intersecting the area, including creatures. Factors below 1 shrink, above 1 enlarge. Both collision geometry and appearance change; final size is clamped to 4–120 world units. Health, speed, and consumption settings stay unchanged. Repeated casts compound; changes persist.
+• freeze: required radius 5–500, duration 500–60000 ms (default 10000), optional color (default #9cdeef). Encases intersecting physical objects and creatures in ice, locking position and stopping feeding. Shells slowly thaw; recasting refreshes duration. Frozen objects cannot be eaten or moved by forces, but can be resized or unmade. Fire projectiles melt 5000 ms of ice per hit; a remaining shell blocks blast damage and burning. Lightning damages creatures through ice without thawing it.
+• lightning: radius 5–500 (default 140, first target around aim point), chainRadius 5–500 (default 240, each subsequent jump), targets 1–20 (default 5), damage 0–1000 (default 25), optional color (default #b9caff). Instantly hits the nearest visible physical object, then chains to the nearest unhit object in range. Each creature takes damage once per cast. Non-creature objects conduct but take no damage. First arc starts at caster; clouds block every arc. Default damage is half Fireball damage. At most 100 visible arcs.
+• cloud: required radius 5–500, duration 500–60000 ms (default 12000). Dense black smoke hides objects and lights, blocks creature sight and lightning line of sight, and gradually shrinks to nothing. Concealment occupies the opaque inner 85% of the shrinking radius; the edge is wispy. Creatures wander when they cannot see food and cannot eat concealed food. Aimed projectiles, area spells, and collisions still work inside. At most 24 clouds.
+• creature: summons a physical slime with a health bar. Optional color (default #8fc86a), size 10–65 (default 32), hp 1–1000 (default 100), speed 0–100 world units/second (default 24), consumeRadius 0–100 beyond its body (default 18), consumeTime 500–30000 ms per object (default 4000), lifetime 0–60000 ms (0 persists). Seeks the nearest visible, unfrozen non-creature object, slowly shrinks and consumes nearby objects of any material, and wanders if none remain. Does not eat creatures or walls. Projectile damage reduces health; zero health removes it. No regeneration. Default slime survives exactly one default Fireball and dies to the second hit.
+• light: optional color (default #ffb866), rainbow boolean (default false), required radius 5–500, duration 100–60000 ms (default 5000), flicker 0–2000 ms (default 650, included in duration). A stationary continuous glow, not particles. Rainbow cycles through all hues in five seconds; flicker fades it out at the end. At most 32 active lights. Resize also scales lights (radius clamped to 5–500); Unmake affects physical objects only.
+• resize: required radius 5–500 and factor 0.25–3. Immediately scales all physical objects and light glows intersecting the area, including creatures. Factors below 1 shrink, above 1 enlarge. Both collision geometry and appearance change; final size is clamped to 4–120 world units. Health, speed, and consumption settings stay unchanged. Repeated casts compound; changes persist.
 • spawn: shape "box" | "circle" (default box), material "wood" | "metal" | "stone" | "crystal" | "ice", count 1–20, size 5–65 (circle radius / half box width), spread 0–220, optional color, lifetime 0–60000 ms (0 persists). All spawned objects have physical collisions; wood burns on fireball impact.
 • burst: required color; count 1–160, speed 0–12, size 1–20, lifetime 100–5000 ms, gravity -0.2–0.2. Creates glowing particles.
 • ring: required color and radius 5–500; duration 100–4000 ms. Animated circle; contracts when this spell contains a pull force, otherwise expands.
-• force: mode "pull" | "push" | "orbit"; required radius 5–500; strength 0.1–3. Applies an impulse to existing objects in the area.
+• force: mode "pull" | "push" | "orbit"; required radius 5–500; strength 0.1–3. Applies an impulse to existing objects and creatures in the area. Frozen objects stay locked until thawed.
 • remove: required radius 5–500. Removes all conjured objects intersecting the area; never the walls.
-• projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, damage 0–1000 (default 50, applied once to each creature in the blast), particles 10–160. Travels to target, explodes, pushes objects and destroys wooden objects in the blast. Other actions are delayed from cast time, NOT projectile arrival.
+• projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, damage 0–1000 (default 50, applied once to each creature in the blast), particles 10–160. Travels to target, explodes, pushes objects and destroys wooden objects in the blast. Each blast also melts 5000 ms of ice; any remaining shell prevents blast damage and wood burning. Other actions are delayed from cast time, NOT projectile arrival.
 
 Optional blocks, at most 8, render before or after the main content:
 { "id": "unique-note", "kind": "text", "content": "Extra observation", "placement": "before" | "after" }

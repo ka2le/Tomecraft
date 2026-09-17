@@ -6,6 +6,25 @@ import { loadLibrary, saveLibrary } from '../src/storage';
 const step = (world: SpellEngine, frames = 90) => { for(let i=0;i<frames;i++)world.update(); };
 describe('Living and persistent spells', () => {
   const spell = (id: string) => starterSpells.find(s => s.id === id)!;
+  it('preserves gravity impulses on slimes and resizes independent light instances', () => {
+    const w=new SpellEngine(false); w.cast(spell('hungry-slime'),{x:500,y:500});step(w,10);
+    w.cast(spell('gravitic-grasp'),{x:700,y:500});step(w,1);expect(w.objects[0].velocity.x).toBeGreaterThan(5);
+    step(w,10);w.cast(spell('rainbow-light'),{x:700,y:500});step(w,10);
+    w.cast(spell('shrink'),{x:700,y:500});step(w,10);expect(w.lights[0].action.radius).toBe(75);
+    w.cast(spell('rainbow-light'),{x:1000,y:500});step(w,1);expect(w.lights[1].action.radius).toBe(150);w.destroy();
+  });
+  it('freezes movement, melts ice with fire, chains half-damage hits, and conceals targets', () => {
+    const w=new SpellEngine(false);
+    for(const x of [600,800,1000]){w.cast(spell('hungry-slime'),{x,y:500});step(w,10);}
+    w.cast(spell('chain-lightning'),{x:600,y:500});step(w,10);
+    expect(w.objects.map(b=>b.plugin.creature.hp)).toEqual([75,75,75]);expect(w.arcs).toHaveLength(3);
+    const body=w.objects[0];w.cast(spell('ice-prison'),{...body.position});step(w,10);const position={...body.position};
+    step(w,30);expect(body.position).toEqual(position);expect(body.isStatic).toBe(true);
+    w.cast(spell('fireball'),position);step(w,60);expect(body.plugin.frozen.remaining).toBeLessThan(5000);expect(body.plugin.creature.hp).toBe(75);
+    step(w,240);expect(body.isStatic).toBe(false);
+    w.cast(spell('black-mist'),{...body.position});step(w,10);expect(w.canSee({x:700,y:810},body.position)).toBe(false);
+    step(w,730);expect(w.clouds).toHaveLength(0);expect(w.canSee({x:700,y:810},body.position)).toBe(true);w.destroy();
+  });
   it('leaves a slime at half health after one fireball and kills it with two', () => {
     const w = new SpellEngine(false); w.cast(spell('hungry-slime'), {x:700,y:500}); step(w,10);
     w.cast(spell('fireball'), {...w.objects[0].position}); step(w,60);
@@ -40,7 +59,7 @@ it('upgrades saved tomes to eight slots without replacing edits or restoring del
   vi.stubGlobal('localStorage', {getItem:()=>saved, setItem:(_:string, value:string)=>{saved=value;}});
   try {
     const library = loadLibrary();
-    expect(library.spells).toHaveLength(9); expect(library.spells[0].title).toBe('My Fireball');
+    expect(library.spells).toHaveLength(starterSpells.length); expect(library.spells[0].title).toBe('My Fireball');
     expect(library.slots).toEqual(['iron-orbit','fireball','wooden-box','unmake','hungry-slime','rainbow-light','shrink','enlarge']);
     saveLibrary({...library, spells:library.spells.filter(s=>s.id!=='hungry-slime')});
     expect(loadLibrary().spells.some(s=>s.id==='hungry-slime')).toBe(false);
