@@ -488,6 +488,63 @@ export const starterSpells: Spell[] = [
         dispose() { if (Matter.Composite.allBodies(world.engine.world).includes(hole)) Matter.Composite.remove(world.engine.world, hole); }
     });
 }`
+  },
+  {
+    "version": 2,
+    "id": "skybound-scout",
+    "title": "Skybound Scout",
+    "subtitle": "A small engine, a very large sense of self-preservation.",
+    "school": "Artifice",
+    "icon": "wind",
+    "color": "#87afc1",
+    "description": "Conjure a swift little aeroplane. It loops through the chamber under its own power, banking away from walls, flame, slimes, and the pull of singularities.",
+    "notes": "The Scout is made of wood and can catch fire. It is clever enough to avoid danger, but a well-aimed Fireball still makes a poor flight plan.",
+    "blocks": [],
+    code: `export default function cast({ world, target, Matter, effect }) {
+    if (world.objects.length >= 250 || !world.terrain.contains(target, 35)) return;
+    const plane = Matter.Bodies.rectangle(target.x, target.y, 48, 24, { isSensor: true, frictionAir: .02, inertia: Infinity });
+    plane.plugin = { material: 'wood', color: '#87afc1', size: 18, shape: 'plane', expires: 0 };
+    Matter.Body.setAngle(plane, Math.random() * Math.PI * 2);
+    Matter.Composite.add(world.engine.world, plane);
+    let heading = plane.angle, stop;
+    const steerAway = (x, y, radius, weight) => {
+        const dx = plane.position.x - x, dy = plane.position.y - y, distance = Math.hypot(dx, dy);
+        if (distance < .1 || distance >= radius) return { x: 0, y: 0 };
+        const push = weight * Math.pow(1 - distance / radius, 2);
+        return { x: dx / distance * push, y: dy / distance * push };
+    };
+    stop = effect({ duration: Infinity,
+        update(dt) {
+            if (!world.objects.includes(plane)) { stop(); return; }
+            const frame = dt / 16.67, bounds = world.terrain.bounds;
+            let turn = .018, ax = Math.cos(heading) * .8, ay = Math.sin(heading) * .8;
+            const dangers = world.objects.filter(body => body !== plane);
+            for (const body of dangers) {
+                const data = body.plugin || {};
+                const radius = data.blackHole ? 270 + (data.size || 20) * 2 : data.creature ? 165 + (data.size || 20) : data.fuel?.burning ? 190 + (data.size || 20) : 0;
+                if (!radius) continue;
+                const away = steerAway(body.position.x, body.position.y, radius, data.blackHole ? 5 : 3);
+                ax += away.x; ay += away.y;
+            }
+            for (const tuft of world.terrain.grass.values()) if (tuft.fuel?.burning) { const away = steerAway(tuft.x, tuft.y, 120, 2); ax += away.x; ay += away.y; }
+            const edge = 105;
+            if (plane.position.x < bounds.minX + edge) ax += 4;
+            if (plane.position.x > bounds.maxX - edge) ax -= 4;
+            if (plane.position.y < bounds.minY + edge) ay += 4;
+            if (plane.position.y > bounds.maxY - edge) ay -= 4;
+            const desired = Math.atan2(ay, ax);
+            let delta = (desired - heading + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+            delta = Math.max(-.105 * frame, Math.min(.105 * frame, delta));
+            heading += delta + turn * frame;
+            const probe = { x: plane.position.x + Math.cos(heading) * 65, y: plane.position.y + Math.sin(heading) * 65 };
+            if (!world.terrain.contains(probe, 20)) heading += .16 * frame;
+            Matter.Body.setAngle(plane, heading);
+            Matter.Body.setVelocity(plane, { x: Math.cos(heading) * 10.5, y: Math.sin(heading) * 10.5 });
+        },
+        dispose() { if (Matter.Composite.allBodies(world.engine.world).includes(plane)) Matter.Composite.remove(world.engine.world, plane); }
+    });
+    world.burst(target, '#b9dbe6', 22, 2.2, 2, 650);
+}`
   }
 ].map(s => spellSchema.parse(s));
 
@@ -497,6 +554,7 @@ export const starterReleases = [
   { revision: 3, ids: ['ice-prison', 'chain-lightning', 'black-mist'] },
   { revision: 4, ids: ['wellspring', 'unfold-chamber', 'wandering-meadow'] },
   { revision: 5, ids: ['mosaic-floor', 'feeding-singularity'] },
+  { revision: 6, ids: ['skybound-scout'] },
 ];
 export const starterRevision = starterReleases.at(-1)!.revision;
 

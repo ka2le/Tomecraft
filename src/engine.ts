@@ -106,6 +106,12 @@ export class SpellEngine {
   }
   remove(target: Point, radius: number) {
     this.terrain.remove(target,radius);
+    // Floor enchantments are chamber state rather than bodies, so Unmake must
+    // clear them here as well. This also upgrades existing saved Unmake spells.
+    const mosaic = (this.terrain as any).__mosaicFloorState;
+    if (mosaic) for (const [id, tile] of mosaic.tiles)
+      if (Math.hypot(tile.x * 100 + 50 - target.x, tile.y * 100 + 50 - target.y) <= radius)
+        mosaic.tiles.delete(id);
     for (const body of this.objects) {
       const data = body.plugin as ObjectData;
       const nearest = { x: clamp(target.x, body.bounds.min.x, body.bounds.max.x), y: clamp(target.y, body.bounds.min.y, body.bounds.max.y) };
@@ -301,6 +307,7 @@ export class SpellEngine {
         const width=Math.max(48,s*1.5);ctx.fillStyle='#111b16';ctx.fillRect(-width/2,-s-18,width,7);ctx.fillStyle=data.creature.hp/data.creature.maxHp>.5?'#a5dc7b':'#e6b365';ctx.fillRect(-width/2+1,-s-17,(width-2)*Math.max(0,data.creature.hp/data.creature.maxHp),5);
       }
       else if(data.shape==='circle'){const g=ctx.createRadialGradient(-data.size*.35,-data.size*.4,1,0,0,data.size);g.addColorStop(0,'#f2f1da');g.addColorStop(.3,data.color);g.addColorStop(1,'#424d4a');ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,data.size,0,Math.PI*2);ctx.fill();ctx.stroke();}
+      else if(data.shape==='plane'){const s=data.size;ctx.fillStyle='#9ab8c5';ctx.beginPath();ctx.moveTo(s*1.5,0);ctx.lineTo(-s*.9,-s*.48);ctx.lineTo(-s*.55,0);ctx.lineTo(-s*.9,s*.48);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#dbe5dd';ctx.beginPath();ctx.moveTo(s*.25,0);ctx.lineTo(-s*.55,-s*1.35);ctx.lineTo(-s*.3,0);ctx.lineTo(-s*.55,s*1.35);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#3d6573';ctx.beginPath();ctx.arc(s*.35,0,s*.28,0,Math.PI*2);ctx.fill();}
       else {const s=data.size;ctx.fillRect(-s,-s,s*2,s*2);ctx.strokeRect(-s,-s,s*2,s*2);ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.strokeStyle='#372b1e88';ctx.lineWidth=1;for(let i=-s+7;i<s;i+=12){ctx.beginPath();ctx.moveTo(i,-s);ctx.lineTo(i,s);ctx.stroke();}ctx.strokeStyle=data.material==='wood'?'#b2996d':'#dddbce55';ctx.lineWidth=5;ctx.strokeRect(-s+5,-s+5,s*2-10,s*2-10);if(data.material==='wood'){ctx.beginPath();ctx.moveTo(-s+6,-s+6);ctx.lineTo(s-6,s-6);ctx.stroke();}}
       if(data.fuel?.consumed){
         ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.fillStyle=`rgba(24,20,17,${Math.min(.88,data.fuel.consumed)})`;
