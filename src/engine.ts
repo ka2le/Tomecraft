@@ -17,7 +17,7 @@ type Particle = Point & { vx: number; vy: number; color: string; size: number; l
 type Ring = Point & { radius: number; life: number; total: number; color: string; inward: boolean };
 type Projectile = Point & { target: Point; settings: ProjectileSettings };
 type Creature = { hp: number; maxHp: number; speed: number; consumeRadius: number; consumeTime: number; meals: Map<number, { elapsed: number; size: number }> };
-type ObjectData = { material: string; color: string; size: number; expires: number; shape: string; creature?: Creature; fuel?: Fuel; frozen?: { remaining: number; total: number; color: string } };
+type ObjectData = { material: string; color: string; size: number; expires: number; shape: string; anchored?: boolean; creature?: Creature; fuel?: Fuel; frozen?: { remaining: number; total: number; color: string } };
 type Glow = Point & { settings: GlowSettings; started: number };
 type Cloud = Point & { radius: number; duration: number; started: number };
 type Arc = { points: Point[]; color: string; life: number };
@@ -93,7 +93,7 @@ export class SpellEngine {
   force(target: Point, radius: number, strength: number, mode: 'pull' | 'push' | 'orbit') {
     this.terrain.force(target,radius,strength,mode);
     for (const body of this.objects) {
-      if (body.isStatic) continue;
+      if (body.isStatic || (body.plugin as ObjectData).anchored) continue;
       const dx = target.x - body.position.x, dy = target.y - body.position.y, distance = Math.hypot(dx, dy);
       if (distance > radius || distance < .1) continue;
       const power = strength * 9 * (.25 + .75 * (1 - distance / radius));
@@ -206,7 +206,7 @@ export class SpellEngine {
   }
   resize(body: Matter.Body, size: number) {
     const data = body.plugin as ObjectData;
-    const next = clamp(size, 4, 120);
+    const next = clamp(size, 4, 360);
     if (data.frozen) Body.setStatic(body,false);
     Body.scale(body, next / data.size, next / data.size); data.size = next;
     if (data.frozen) Body.setStatic(body,true);

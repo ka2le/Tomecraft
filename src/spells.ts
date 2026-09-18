@@ -82,6 +82,7 @@ export const starterSpells: Spell[] = [
             world.terrain.ignite(target, 130);
             for (const body of world.objects) {
                 if (!world.inRange(body, target, 130)) continue;
+                if (body.plugin.anchored) continue;
                 world.thaw(body, 5000);
                 if (!body.plugin.frozen) world.damage(body, 50);
                 world.ignite(body);
@@ -171,6 +172,10 @@ export const starterSpells: Spell[] = [
         world.rings.push({ ...target, color: "#9dc9ac", radius: 155, life: 850, total: 850, inward: false });
     after(160, () => {
         world.remove(target, 155);
+        const mosaic = world.terrain.__mosaicFloorState;
+        if (mosaic) for (const [key, tile] of mosaic.tiles)
+            if (Math.hypot(tile.x * 100 + 50 - target.x, tile.y * 100 + 50 - target.y) <= 155)
+                mosaic.tiles.delete(key);
     });
     after(160, () => {
         world.burst(target, "#b9d5be", 65, 2, 3, 1200, -0.015);
@@ -254,7 +259,7 @@ export const starterSpells: Spell[] = [
     "icon": "orbs",
     "color": "#d4b574",
     "description": "Double the size of nearby conjurations, including slimes and glowing lights. Physical objects grow in substance; lights spread their glow farther.",
-    "notes": "A larger slime is still two Fireballs away from oblivion. No conjuration can grow beyond the chamber’s limits.",
+    "notes": "A larger slime is still two Fireballs away from oblivion. Repeated castings can now make even a singularity truly immense.",
     "blocks": [],
     code: `export default function cast({ world, target }) {
     const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -264,7 +269,7 @@ export const starterSpells: Spell[] = [
                 world.resize(body, body.plugin.size * 2);
         for (const light of world.lights)
             if (Math.hypot(light.x - target.x, light.y - target.y) <= 130 + light.settings.radius)
-                light.settings.radius = clamp(light.settings.radius * 2, 5, 500);
+                light.settings.radius = clamp(light.settings.radius * 2, 5, 900);
     }
     {
         if (world.rings.length < 100)
@@ -371,6 +376,118 @@ export const starterSpells: Spell[] = [
     code: `export default function cast({ world, target }) {
     world.terrain.plant(target, 35, world.objects);
 }`
+  },
+  {
+    "version": 2,
+    "id": "mosaic-floor",
+    "title": "Mosaic Enchantment",
+    "subtitle": "Even stone may dream in color.",
+    "school": "Illumination",
+    "icon": "sparkles",
+    "color": "#d5a7e8",
+    "description": "Repaint a three-by-three square of the chamber floor as an intricate magical mosaic. Each casting advances through five jewel-bright designs.",
+    "notes": "The artwork is part of the floor, so objects remain naturally above it. Unmake clears the enchanted tiles; resetting the chamber restores all original stone.",
+    "blocks": [],
+    code: `export default function cast({ world, target, effect }) {
+    const terrain = world.terrain;
+    const centerX = Math.floor(target.x / 100), centerY = Math.floor(target.y / 100);
+    const palettes = [
+        ['#261e45', '#704f9f', '#bd8dd1', '#e7c58f', '#6bb4b2'],
+        ['#283c4d', '#4f8392', '#9cc6b7', '#e6c27b', '#bd6f72'],
+        ['#332c42', '#68597c', '#a9829c', '#d6aa77', '#719aa1'],
+        ['#432d36', '#925b58', '#d49b68', '#f0d59c', '#788fa6'],
+        ['#273b38', '#527a6c', '#91ad87', '#d4bd79', '#8e7299']
+    ];
+    if (!terrain.__mosaicFloorState) {
+        const originalRenderFloor = terrain.renderFloor.bind(terrain);
+        terrain.__mosaicFloorState = { tiles: new Map(), nextPattern: 0, originalRenderFloor };
+        terrain.renderFloor = function(ctx) {
+            originalRenderFloor(ctx);
+            const state = terrain.__mosaicFloorState;
+            if (!state) return;
+            for (const tile of state.tiles.values()) {
+                const p = palettes[tile.pattern], x = tile.x * 100, y = tile.y * 100, seed = Math.abs((tile.x * 17 + tile.y * 31) % 11);
+                ctx.save(); ctx.translate(x, y); ctx.beginPath(); ctx.rect(2, 2, 96, 96); ctx.clip();
+                ctx.fillStyle = p[0]; ctx.fillRect(2, 2, 96, 96);
+                if (tile.pattern === 0) {
+                    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + seed * .1; ctx.fillStyle = p[1 + i % 4]; ctx.beginPath(); ctx.moveTo(50, 50); ctx.arc(50, 50, 43, a - .28, a + .28); ctx.closePath(); ctx.fill(); }
+                    ctx.fillStyle = p[3]; ctx.beginPath(); ctx.arc(50, 50, 12, 0, Math.PI * 2); ctx.fill();
+                } else if (tile.pattern === 1) {
+                    for (let yy = 0; yy <= 100; yy += 25) for (let xx = 0; xx <= 100; xx += 25) { ctx.fillStyle = p[(xx / 25 + yy / 25 + seed) % 2 ? 2 : 1]; ctx.beginPath(); ctx.moveTo(xx, yy - 15); ctx.lineTo(xx + 15, yy); ctx.lineTo(xx, yy + 15); ctx.lineTo(xx - 15, yy); ctx.fill(); }
+                } else if (tile.pattern === 2) {
+                    for (let yy = 8; yy < 105; yy += 21) for (let xx = -8 + ((yy / 21 | 0) & 1) * 13; xx < 110; xx += 26) { ctx.fillStyle = p[1 + Math.abs((xx + yy + seed) % 3)]; ctx.beginPath(); ctx.arc(xx, yy, 14, 0, Math.PI); ctx.fill(); }
+                } else if (tile.pattern === 3) {
+                    for (let i = 0; i < 16; i++) { const a = i * Math.PI * 2 / 16; ctx.fillStyle = p[1 + (i + seed) % 4]; ctx.beginPath(); ctx.moveTo(50, 50); ctx.lineTo(50 + Math.cos(a) * 75, 50 + Math.sin(a) * 75); ctx.lineTo(50 + Math.cos(a + .38) * 75, 50 + Math.sin(a + .38) * 75); ctx.fill(); }
+                    ctx.fillStyle = p[0]; ctx.beginPath(); ctx.arc(50, 50, 21, 0, Math.PI * 2); ctx.fill();
+                } else {
+                    for (let i = -100; i < 180; i += 25) { ctx.strokeStyle = p[(i / 25 + seed) & 1 ? 1 : 2]; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 100, 100); ctx.stroke(); ctx.strokeStyle = p[3]; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(i + 100, 0); ctx.lineTo(i, 100); ctx.stroke(); }
+                }
+                ctx.strokeStyle = '#e8d6a65c'; ctx.lineWidth = 2; ctx.strokeRect(3, 3, 94, 94); ctx.restore();
+            }
+        };
+        effect({ duration: Infinity, dispose() { const state = terrain.__mosaicFloorState; if (state) { terrain.renderFloor = state.originalRenderFloor; delete terrain.__mosaicFloorState; } } });
+    }
+    const state = terrain.__mosaicFloorState, pattern = state.nextPattern;
+    state.nextPattern = (pattern + 1) % 5;
+    let painted = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = centerX + dx, y = centerY + dy, key = x + ',' + y; if (terrain.tiles.has(key)) { state.tiles.set(key, { x, y, pattern }); painted++; } }
+    if (!painted) throw new Error('Aim at an existing floor square.');
+    world.burst({ x: centerX * 100 + 50, y: centerY * 100 + 50 }, palettes[pattern][3], 36, 2.3, 3, 800);
+}`
+  },
+  {
+    "version": 2,
+    "id": "feeding-singularity",
+    "title": "Feeding Singularity",
+    "subtitle": "Feed it, or watch it fade.",
+    "school": "Graviturgy",
+    "icon": "moon",
+    "color": "#7251b5",
+    "description": "Create a black hole that draws in and consumes nearby objects. Each offering strengthens its event horizon; without food it slowly evaporates.",
+    "notes": "Singularities are fixed at their casting point: Fireballs and other force magic cannot push them. When holes overlap, the larger absorbs the smaller without shifting.",
+    "blocks": [],
+    code: `export default function cast({ world, target, Matter, effect }) {
+    if (world.objects.length >= 250) return;
+    const startSize = 22;
+    if (!world.terrain.contains(target, startSize + 8)) return;
+    const hole = Matter.Bodies.circle(target.x, target.y, startSize, { isSensor: true, frictionAir: .18, restitution: 0, density: .008, inertia: Infinity });
+    hole.plugin = { material: 'void', color: '#050308', size: startSize, shape: 'circle', expires: 0, blackHole: true, anchored: true };
+    Matter.Composite.add(world.engine.world, hole);
+    world.rings.push({ ...target, color: '#7251b5', radius: 75, life: 700, total: 700, inward: true });
+    world.burst(target, '#8e6bc4', 28, 2.2, 3, 700);
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const massOf = body => Number.isFinite(body.mass) && body.mass > 0 ? body.mass : Math.PI * Math.pow(Math.max(1, Number(body.plugin?.size) || 10), 2) * .001;
+    let stop;
+    stop = effect({ duration: Infinity,
+        update(dt) {
+            const objects = world.objects;
+            if (!objects.includes(hole)) { stop(); return; }
+            Matter.Body.setVelocity(hole, { x: 0, y: 0 });
+            const size = Math.max(0, Number(hole.plugin.size) || startSize), influenceRadius = 95 + size * 5.1, eventRadius = size * .78, frame = dt / 16.67;
+            let gainedMass = 0, consumedCount = 0;
+            world.terrain.force(hole.position, influenceRadius, (.10 + size * .0042) * frame, 'pull');
+            for (const other of objects) {
+                if (other === hole) continue;
+                const otherData = other.plugin || {};
+                if (otherData.blackHole && otherData.size >= size) continue;
+                if (world.inRange(other, hole.position, eventRadius)) { gainedMass += massOf(other); consumedCount++; Matter.Composite.remove(world.engine.world, other); continue; }
+                if (other.isStatic || otherData.blackHole) continue;
+                const dx = hole.position.x - other.position.x, dy = hole.position.y - other.position.y, distance = Math.hypot(dx, dy);
+                if (distance < .1 || distance > influenceRadius) continue;
+                const gravity = (.045 + size * .0026) * (.28 + 1.9 * Math.pow(1 - distance / influenceRadius, 2)) * frame;
+                Matter.Sleeping.set(other, false); Matter.Body.setVelocity(other, { x: clamp(other.velocity.x + dx / distance * gravity, -26, 26), y: clamp(other.velocity.y + dy / distance * gravity, -26, 26) });
+            }
+            if (gainedMass > 0) { world.resize(hole, Math.sqrt(Math.pow(Math.max(4, hole.plugin.size), 2) + gainedMass * 95)); if (consumedCount) world.burst(hole.position, '#a784dd', Math.min(45, 6 + consumedCount * 4), 2.4, 3, 600); }
+            else { const current = Math.max(0, hole.plugin.size), smallness = current < 18 ? (18 - current) / 14 : 0, next = current - (.55 + smallness * smallness * 8) * dt / 1000; if (next <= 4.25) { const p = { ...hole.position }; Matter.Composite.remove(world.engine.world, hole); world.burst(p, '#7251b5', 34, 3.2, 4, 750); stop(); } else world.resize(hole, next); }
+        },
+        draw(ctx, age, reducedMotion) {
+            if (!world.objects.includes(hole)) return;
+            const x = hole.position.x, y = hole.position.y, size = Math.max(4, hole.plugin.size), phase = reducedMotion ? 0 : age / 850;
+            ctx.save(); const lens = ctx.createRadialGradient(x, y, size * .55, x, y, size * 2.6); lens.addColorStop(0, '#00000000'); lens.addColorStop(.68, '#7251b52d'); lens.addColorStop(1, '#7251b500'); ctx.fillStyle = lens; ctx.beginPath(); ctx.arc(x, y, size * 2.6, 0, Math.PI * 2); ctx.fill(); ctx.translate(x, y); ctx.rotate(phase); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = '#8d68c5'; ctx.globalAlpha = .58; ctx.lineWidth = Math.max(1.5, size * .055); ctx.beginPath(); ctx.ellipse(0, 0, size * 1.55, size * .48, .18, 0, Math.PI * 2); ctx.stroke(); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; const rim = ctx.createRadialGradient(0, 0, size * .62, 0, 0, size * 1.05); rim.addColorStop(0, '#000000'); rim.addColorStop(.9, '#291b3d'); rim.addColorStop(1, '#8464b8'); ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(0, 0, size, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#000000'; ctx.beginPath(); ctx.arc(0, 0, size * .78, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        },
+        dispose() { if (Matter.Composite.allBodies(world.engine.world).includes(hole)) Matter.Composite.remove(world.engine.world, hole); }
+    });
+}`
   }
 ].map(s => spellSchema.parse(s));
 
@@ -379,6 +496,7 @@ export const starterReleases = [
   { revision: 2, ids: ['hungry-slime', 'rainbow-light', 'shrink', 'enlarge'] },
   { revision: 3, ids: ['ice-prison', 'chain-lightning', 'black-mist'] },
   { revision: 4, ids: ['wellspring', 'unfold-chamber', 'wandering-meadow'] },
+  { revision: 5, ids: ['mosaic-floor', 'feeding-singularity'] },
 ];
 export const starterRevision = starterReleases.at(-1)!.revision;
 
