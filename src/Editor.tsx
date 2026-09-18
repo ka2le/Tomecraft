@@ -18,7 +18,7 @@ export default function Editor({ spell, initialSection, isNew, onSave, onClose, 
   const [deleting,setDeleting]=useState(false);
   const upload=useRef<HTMLInputElement>(null);
   const update=<K extends keyof Spell>(key:K,value:Spell[K])=>setDraft(d=>({...d,[key]:value}));
-  const changeSection=(next:EditSection)=>{setError('');if(section==='code'){try{setDraft(parseSpell(source));}catch(e){setError((e as Error).message);return;}}if(next==='code')setSource(spellSource(draft));setSection(next);};
+  const changeSection=(next:EditSection)=>{if(next===section)return;setError('');if(section==='code'){try{setDraft(parseSpell(source));}catch(e){setError((e as Error).message);return;}}if(next==='code')setSource(spellSource(draft));setSection(next);};
   const close=()=>{const dirty=JSON.stringify(draft)!==JSON.stringify(spell)||(section==='code'&&source!==spellSource(spell));if(dirty)setDiscard(true);else onClose();};
   const save=()=>{try{const result=section==='code'?parseSpell(source):spellSchema.parse(draft);const problem=onSave(result);if(problem)setError(problem);}catch(e){setError(e instanceof Error?e.message:'This spell could not be read.');}};
   const addBlock=(kind:'text'|'image')=>{if(draft.blocks.length>=8){setError('A spell can hold up to eight additional notes or images.');return;}update('blocks',[...draft.blocks,kind==='text'?{id:crypto.randomUUID(),kind,placement:'after',content:'A new observation…'}:{id:crypto.randomUUID(),kind,placement:'after',content:'',caption:''}]);};

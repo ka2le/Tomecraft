@@ -28,7 +28,7 @@ export type Spell = z.infer<typeof javascriptSpellSchema>;
 export type Block = z.infer<typeof blockSchema>;
 
 export function parseSpell(source: string): Spell {
-  const clean = source.trim().replace(/^```(?:javascript|js|json)?\s*/i, '').replace(/\s*```$/, '');
+  const clean = source.trim().replace(/^```(?:javascript|json|js)?[ \t]*\r?\n/i, '').replace(/\s*```$/, '');
   if (clean.length > 6500000) throw new Error('This spell is too large. Use smaller images.');
   let value: unknown;
   if (clean.startsWith('{')) {
