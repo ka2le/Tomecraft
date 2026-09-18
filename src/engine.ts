@@ -1,5 +1,6 @@
 import Matter from 'matter-js';
-import type { Action, Spell } from './spells';
+import type { Spell } from './spells';
+import { SpellRuntime } from './spellRuntime';
 import { Terrain } from './terrain';
 import { burnFuel, drawFlame, drawIce, newFuel } from './elements';
 import type { Fuel } from './elements';
@@ -8,13 +9,16 @@ const { Engine, Bodies, Body, Composite } = Matter;
 export const ROOM = { width: 1400, height: 1000 };
 export const CASTER = { x: 700, y: 810 };
 export type Point = { x: number; y: number };
+type SpawnSettings = { shape: 'box' | 'circle'; material: 'wood' | 'metal' | 'stone' | 'crystal' | 'ice'; count: number; size: number; spread: number; lifetime: number; color?: string };
+type ProjectileSettings = { color: string; speed: number; radius: number; power: number; damage: number; particles: number };
+type GlowSettings = { color: string; rainbow: boolean; radius: number; duration: number; flicker: number };
+type LightningSettings = { radius: number; chainRadius: number; targets: number; damage: number; color: string };
 type Particle = Point & { vx: number; vy: number; color: string; size: number; life: number; total: number; gravity: number };
 type Ring = Point & { radius: number; life: number; total: number; color: string; inward: boolean };
-type Projectile = Point & { target: Point; action: Extract<Action, {type: 'projectile'}> };
-type ScheduledCast = { target: Point; spell: Spell; started: number; remaining: Action[] };
+type Projectile = Point & { target: Point; settings: ProjectileSettings };
 type Creature = { hp: number; maxHp: number; speed: number; consumeRadius: number; consumeTime: number; meals: Map<number, { elapsed: number; size: number }> };
 type ObjectData = { material: string; color: string; size: number; expires: number; shape: string; creature?: Creature; fuel?: Fuel; frozen?: { remaining: number; total: number; color: string } };
-type Glow = Point & { action: Extract<Action, {type: 'light'}>; started: number };
+type Glow = Point & { settings: GlowSettings; started: number };
 type Cloud = Point & { radius: number; duration: number; started: number };
 type Arc = { points: Point[]; color: string; life: number };
 export const materialColors: Record<string, string> = { wood: '#90704a', metal: '#a5b0b1', stone: '#76766e', crystal: '#b28ed4', ice: '#92d2de' };
@@ -27,7 +31,8 @@ export class SpellEngine {
   particles: Particle[] = [];
   rings: Ring[] = [];
   projectiles: Projectile[] = [];
-  pending: ScheduledCast[] = [];
+  scripts = new SpellRuntime(this);
+  onScriptError?: (message: string) => void;
   lights: Glow[] = [];
   clouds: Cloud[] = [];
   arcs: Arc[] = [];
@@ -36,42 +41,44 @@ export class SpellEngine {
   casts = 0;
   private fireClock = 0;
   constructor(seed = true) {
+    Matter.Events.on(this.engine, 'collisionStart', event => this.scripts.collision(event.pairs));
     if (seed) this.seed();
   }
   get objects() { return Composite.allBodies(this.engine.world).filter(b => !b.isStatic || (b.plugin as ObjectData).frozen); }
   seed() {
-    const wood = { type: 'spawn', shape: 'box', material: 'wood', count: 1, size: 34, spread: 0, lifetime: 0, delay: 0 } as const;
+    const wood = { shape: 'box', material: 'wood', count: 1, size: 34, spread: 0, lifetime: 0 } as const;
     for (const p of [{x:520,y:410}, {x:596,y:420}, {x:550,y:486}]) this.spawn(wood,p);
     this.spawn({ ...wood, shape: 'circle', material: 'metal', count: 7, size: 11, spread: 55 }, {x:900,y:455});
   }
   clear() {
-    for (const body of this.objects) Composite.remove(this.engine.world, body);
-    this.particles = []; this.rings = []; this.projectiles = []; this.pending = []; this.lights = [];
+    this.scripts.clear();
+    Composite.clear(this.engine.world, false);
+    this.particles = []; this.rings = []; this.projectiles = []; this.lights = [];
     this.clouds = []; this.arcs = [];
     this.terrain.reset();
   }
-  destroy() { this.clear(); Engine.clear(this.engine); Composite.clear(this.engine.world, false); }
+  destroy() { this.clear(); Matter.Events.off(this.engine, 'collisionStart'); Engine.clear(this.engine); Composite.clear(this.engine.world, false); }
   cast(spell: Spell, target: Point): boolean {
     this.castError = '';
-    if (this.time - this.lastCast < 140 || this.pending.length >= 12 || this.projectiles.length >= 24) return false;
+    if (this.time - this.lastCast < 140 || this.projectiles.length >= 24) return false;
     if (!this.terrain.contains(target, 5)) { this.castError = 'Aim inside the chamber walls.'; return false; }
-    if (spell.actions.some(a=>a.type==='expand') && !this.terrain.edge(target)) { this.castError = this.terrain.tiles.size>=380 ? 'The chamber has reached its limit.' : 'Aim within half a floor square of an exposed edge.'; return false; }
-    this.lastCast = this.time; this.casts++;
-    this.pending.push({ target, spell, started: this.time, remaining: [...spell.actions] });
-    return true;
+    this.lastCast = this.time;
+    const success = this.scripts.cast(spell.code, spell.title, target, CASTER);
+    if (success) this.casts++;
+    return success;
   }
-  spawn(action: Extract<Action, {type: 'spawn'}>, target: Point) {
+  spawn(settings: SpawnSettings, target: Point) {
     const available = 250 - this.objects.length;
-    for (let i = 0; i < Math.min(action.count, available); i++) {
-      const angle = i * Math.PI * 2 / action.count + .3;
-      const distance = action.count === 1 ? 0 : Math.max(action.spread, action.size * Math.sqrt(action.count));
-      const b=this.terrain.bounds, margin=action.size*1.5+5;
+    for (let i = 0; i < Math.min(settings.count, available); i++) {
+      const angle = i * Math.PI * 2 / settings.count + .3;
+      const distance = settings.count === 1 ? 0 : Math.max(settings.spread, settings.size * Math.sqrt(settings.count));
+      const b=this.terrain.bounds, margin=settings.size*1.5+5;
       const x = clamp(target.x + Math.cos(angle) * distance, b.minX+margin, b.maxX-margin);
       const y = clamp(target.y + Math.sin(angle) * distance, b.minY+margin, b.maxY-margin);
       if(!this.terrain.contains({x,y},margin)) continue;
-      const options = { restitution: action.material === 'metal' ? .72 : .4, frictionAir: .022, friction: .25, density: action.material === 'metal' ? .006 : .001, angle: action.shape === 'box' ? (Math.random() - .5) * .24 : 0 };
-      const body = action.shape === 'circle' ? Bodies.circle(x, y, action.size, options) : Bodies.rectangle(x,y,action.size * 2,action.size * 2,{...options, chamfer: {radius: 3}});
-      body.plugin = { material: action.material, size: action.size, color: action.color || materialColors[action.material], expires: action.lifetime ? this.time + action.lifetime : 0, shape: action.shape } satisfies ObjectData;
+      const options = { restitution: settings.material === 'metal' ? .72 : .4, frictionAir: .022, friction: .25, density: settings.material === 'metal' ? .006 : .001, angle: settings.shape === 'box' ? (Math.random() - .5) * .24 : 0 };
+      const body = settings.shape === 'circle' ? Bodies.circle(x, y, settings.size, options) : Bodies.rectangle(x,y,settings.size * 2,settings.size * 2,{...options, chamfer: {radius: 3}});
+      body.plugin = { material: settings.material, size: settings.size, color: settings.color || materialColors[settings.material], expires: settings.lifetime ? this.time + settings.lifetime : 0, shape: settings.shape } satisfies ObjectData;
       Composite.add(this.engine.world, body);
     }
   }
@@ -106,40 +113,6 @@ export class SpellEngine {
         this.burst(body.position, data.color, 14, 2.5, 3, 800);
         Composite.remove(this.engine.world, body);
       }
-    }
-  }
-  run(action: Action, target: Point, spell: Spell) {
-    switch (action.type) {
-      case 'water': this.terrain.addWater(target,action.amount,action.duration); break;
-      case 'expand': this.terrain.expand(target,action.depth); break;
-      case 'grass': this.terrain.plant(target,action.radius,this.objects); break;
-      case 'freeze':
-        this.terrain.freeze(target,action.radius,action.duration);
-        for (const body of this.objects) if (this.inRange(body, target, action.radius)) {
-          (body.plugin as ObjectData).frozen = { remaining: action.duration, total: action.duration, color: action.color };
-          if (!body.isStatic) Body.setStatic(body, true);
-        }
-        break;
-      case 'cloud': if (this.clouds.length < 24) this.clouds.push({ ...target, radius: action.radius, duration: action.duration, started: this.time }); break;
-      case 'lightning': this.lightning(action, target); break;
-      case 'creature': {
-        if (this.objects.length >= 250) break;
-        if(!this.terrain.contains(target,action.size+5)) break;
-        const body = Bodies.circle(target.x, target.y, action.size, { frictionAir: .12, restitution: .1, inertia: Infinity });
-        body.plugin = { material: 'slime', color: action.color, size: action.size, shape: 'circle', expires: action.lifetime ? this.time + action.lifetime : 0, creature: { hp: action.hp, maxHp: action.hp, speed: action.speed, consumeRadius: action.consumeRadius, consumeTime: action.consumeTime, meals: new Map() } } satisfies ObjectData;
-        Composite.add(this.engine.world, body); break;
-      }
-      case 'light': if (this.lights.length < 32) this.lights.push({ ...target, action: { ...action }, started: this.time }); break;
-      case 'resize':
-        for (const body of this.objects) if (this.inRange(body, target, action.radius)) this.resize(body, (body.plugin as ObjectData).size * action.factor);
-        for (const light of this.lights) if (Math.hypot(light.x-target.x, light.y-target.y) <= action.radius + light.action.radius) light.action.radius = clamp(light.action.radius * action.factor, 5, 500);
-        break;
-      case 'spawn': this.spawn(action, target); break;
-      case 'burst': this.burst(target, action.color, action.count, action.speed, action.size, action.lifetime, action.gravity); break;
-      case 'ring': if (this.rings.length < 100) this.rings.push({...target, color:action.color, radius:action.radius, life:action.duration, total:action.duration, inward:spell.actions.some(a => a.type === 'force' && a.mode === 'pull')}); break;
-      case 'force': this.force(target, action.radius, action.strength, action.mode); break;
-      case 'remove': this.remove(target, action.radius); break;
-      case 'projectile': if (this.projectiles.length < 24) this.projectiles.push({...CASTER, target, action}); break;
     }
   }
   inRange(body: Matter.Body, target: Point, radius: number) {
@@ -217,18 +190,18 @@ export class SpellEngine {
     data.creature.hp -= amount;
     if (data.creature.hp <= 0) { this.burst(body.position,data.color,25,2,5,800); Composite.remove(this.engine.world,body); }
   }
-  lightning(action: Extract<Action, {type: 'lightning'}>, target: Point) {
+  lightning(settings: LightningSettings, target: Point) {
     let origin: Point=CASTER, aim=target;
     const hit=new Set<number>();
-    for (let i=0;i<action.targets;i++) {
-      const range=i===0?action.radius:action.chainRadius;
+    for (let i=0;i<settings.targets;i++) {
+      const range=i===0?settings.radius:settings.chainRadius;
       const next=this.objects.filter(b=>!hit.has(b.id)&&this.inRange(b,aim,range)&&this.canSee(origin,b.position))
         .sort((a,b)=>Math.hypot(a.position.x-aim.x,a.position.y-aim.y)-Math.hypot(b.position.x-aim.x,b.position.y-aim.y))[0];
       if (!next) break;
       const end={...next.position}, points=[{...origin}];
       for(let j=1;j<8;j++) { const t=j/8; points.push({x:origin.x+(end.x-origin.x)*t+(Math.random()-.5)*22,y:origin.y+(end.y-origin.y)*t+(Math.random()-.5)*22}); }
-      points.push(end); if(this.arcs.length<100)this.arcs.push({points,color:action.color,life:400});
-      hit.add(next.id); this.damage(next,action.damage); origin=end; aim=end;
+      points.push(end); if(this.arcs.length<100)this.arcs.push({points,color:settings.color,life:400});
+      hit.add(next.id); this.damage(next,settings.damage); origin=end; aim=end;
     }
   }
   resize(body: Matter.Body, size: number) {
@@ -274,35 +247,30 @@ export class SpellEngine {
     this.clouds=this.clouds.filter(c=>this.time-c.started<c.duration);
     for(const arc of this.arcs) arc.life-=dt;
     this.arcs=this.arcs.filter(a=>a.life>0);
-    for (const cast of this.pending) {
-      const due = cast.remaining.filter(a => this.time - cast.started >= a.delay);
-      cast.remaining = cast.remaining.filter(a => this.time - cast.started < a.delay);
-      for (const action of due) this.run(action, cast.target, cast.spell);
-    }
-    this.pending = this.pending.filter(c => c.remaining.length);
+    this.scripts.update(dt);
     this.updateCreatures(dt);
     Engine.update(this.engine, dt);
     this.terrain.update(dt,this.objects);
     this.updateFire(dt);
-    this.lights = this.lights.filter(l => this.time - l.started < l.action.duration);
+    this.lights = this.lights.filter(l => this.time - l.started < l.settings.duration);
     for (const body of this.objects) { const data = body.plugin as ObjectData; if (data.expires && this.time >= data.expires) { this.burst(body.position, data.color, 10, 1, 2, 500); Composite.remove(this.engine.world, body); } }
     for (const p of this.projectiles) {
-      const dx = p.target.x - p.x, dy = p.target.y - p.y, distance = Math.hypot(dx,dy), step = p.action.speed * dt / 16.67;
+      const dx = p.target.x - p.x, dy = p.target.y - p.y, distance = Math.hypot(dx,dy), step = p.settings.speed * dt / 16.67;
       if (distance <= step) {
         p.x = p.target.x; p.y = p.target.y;
-        this.burst(p.target, p.action.color, p.action.particles, 7, 6, 1100);
+        this.burst(p.target, p.settings.color, p.settings.particles, 7, 6, 1100);
         this.burst(p.target, '#fff2b5', 18, 5, 3, 600);
-        this.rings.push({...p.target, color:p.action.color, radius:p.action.radius, life:600, total:600, inward:false});
-        this.force(p.target, p.action.radius, p.action.power, 'push');
-        this.terrain.ignite(p.target,p.action.radius);
+        this.rings.push({...p.target, color:p.settings.color, radius:p.settings.radius, life:600, total:600, inward:false});
+        this.force(p.target, p.settings.radius, p.settings.power, 'push');
+        this.terrain.ignite(p.target,p.settings.radius);
         for (const body of this.objects) {
           const data = body.plugin as ObjectData;
-          if (!this.inRange(body,p.target,p.action.radius)) continue;
+          if (!this.inRange(body,p.target,p.settings.radius)) continue;
           this.thaw(body,5000);
-          if (!data.frozen) this.damage(body,p.action.damage);
+          if (!data.frozen) this.damage(body,p.settings.damage);
           this.ignite(body);
         }
-      } else { p.x += dx/distance * step; p.y += dy/distance * step; this.burst(p, p.action.color, 3, .8, 5, 500); }
+      } else { p.x += dx/distance * step; p.y += dy/distance * step; this.burst(p, p.settings.color, 3, .8, 5, 500); }
     }
     this.projectiles = this.projectiles.filter(p => Math.hypot(p.x-p.target.x,p.y-p.target.y) > .1);
     for (const p of this.particles) { p.life -= dt; p.x += p.vx * dt/16.67; p.y += p.vy * dt/16.67; p.vy += p.gravity; p.vx *= .993; p.vy *= .993; }
@@ -353,16 +321,17 @@ export class SpellEngine {
     for(const r of this.rings){const progress=1-r.life/r.total;const radius=r.radius*(r.inward?1-progress:Math.sin(progress*Math.PI/2));ctx.globalAlpha=(1-progress)*.7;ctx.strokeStyle=r.color;ctx.lineWidth=2+4*(1-progress);ctx.beginPath();ctx.arc(r.x,r.y,Math.max(1,radius),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=.05*(1-progress);ctx.fillStyle=r.color;ctx.fill();}ctx.globalAlpha=1;
     ctx.globalCompositeOperation='lighter';
     for(const glow of this.lights){
-      const {action}=glow, age=this.time-glow.started, remaining=action.duration-age;
-      const tail=Math.min(action.flicker,action.duration), fading=tail>0&&remaining<tail;
+      const {settings}=glow, age=this.time-glow.started, remaining=settings.duration-age;
+      const tail=Math.min(settings.flicker,settings.duration), fading=tail>0&&remaining<tail;
       const alpha=fading?(remaining/tail)*(reducedMotion?1:(.3+.7*Math.pow(Math.sin(age/55),2))):1;
-      const hue=(age/5000*360)%360, tint=action.rainbow?`hsl(${hue} 90% 65%)`:action.color;
-      ctx.globalAlpha=alpha;const g=ctx.createRadialGradient(glow.x,glow.y,0,glow.x,glow.y,action.radius);g.addColorStop(0,tint);g.addColorStop(.15,tint);g.addColorStop(1,'transparent');ctx.fillStyle=g;ctx.globalAlpha=alpha*.42;ctx.beginPath();ctx.arc(glow.x,glow.y,action.radius,0,Math.PI*2);ctx.fill();
-      ctx.globalAlpha=alpha;ctx.shadowColor=tint;ctx.shadowBlur=25;ctx.fillStyle='#fff8eb';ctx.beginPath();ctx.arc(glow.x,glow.y,Math.max(2,action.radius*.045),0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+      const hue=(age/5000*360)%360, tint=settings.rainbow?`hsl(${hue} 90% 65%)`:settings.color;
+      ctx.globalAlpha=alpha;const g=ctx.createRadialGradient(glow.x,glow.y,0,glow.x,glow.y,settings.radius);g.addColorStop(0,tint);g.addColorStop(.15,tint);g.addColorStop(1,'transparent');ctx.fillStyle=g;ctx.globalAlpha=alpha*.42;ctx.beginPath();ctx.arc(glow.x,glow.y,settings.radius,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=alpha;ctx.shadowColor=tint;ctx.shadowBlur=25;ctx.fillStyle='#fff8eb';ctx.beginPath();ctx.arc(glow.x,glow.y,Math.max(2,settings.radius*.045),0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
     }
     for(let i=0;i<this.particles.length;i++){if(reducedMotion && i%3)continue;const p=this.particles[i];const fade=p.life/p.total;ctx.globalAlpha=fade;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,Math.max(.2,p.size*fade),0,Math.PI*2);ctx.fill();}
-    for(const p of this.projectiles){ctx.globalAlpha=1;ctx.shadowColor=p.action.color;ctx.shadowBlur=reducedMotion?0:25;ctx.fillStyle='#fff3b9';ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.fill();}ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+    for(const p of this.projectiles){ctx.globalAlpha=1;ctx.shadowColor=p.settings.color;ctx.shadowBlur=reducedMotion?0:25;ctx.fillStyle='#fff3b9';ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.fill();}ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
     for(const arc of this.arcs){ctx.save();ctx.globalAlpha=arc.life/400;ctx.strokeStyle=arc.color;ctx.lineWidth=3;ctx.shadowColor=arc.color;ctx.shadowBlur=reducedMotion?0:14;ctx.beginPath();arc.points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();ctx.restore();}
+    this.scripts.draw(ctx, reducedMotion);
     // Opaque smoke is drawn over objects, health bars, lights, and spell effects.
     for(const cloud of this.clouds){
       const puffs=this.cloudPuffs(cloud,reducedMotion);

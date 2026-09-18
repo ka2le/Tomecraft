@@ -36,6 +36,7 @@ export default function Arena({ spells, slots, onSlots, activeId, onActive, visi
 
   useEffect(()=>{
     game.current = new SpellEngine();
+    game.current.onScriptError = message => notifyRef.current(message);
     return ()=>{game.current?.destroy();game.current=null;};
   },[]);
   useEffect(()=>{

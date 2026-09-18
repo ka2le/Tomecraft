@@ -59,3 +59,5 @@
  .slot-number{left:3px;top:3px;font-size:8px}
  .spell-picker{bottom:96px}
 }
+
+.spell-manuscript { margin: 16px 0; padding: 18px 12px; max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 ui-monospace, Consolas, monospace; color: #40382d; background: #66512c09; border-block: 1px solid #76592e33; text-align: left; user-select: text; }

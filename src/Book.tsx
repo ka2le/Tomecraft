@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { SpellIcon } from './Icons';
 import { useHold, useMobile } from './hooks';
-import { runesFor } from './spells';
+
 import type { Block, Spell } from './spells';
 
 export type EditSection = 'details' | 'code' | 'extras';
@@ -15,7 +15,6 @@ function Editable({ children, onEdit, label, className = '' }: { children: React
   return <div {...handlers} className={`editable ${className}`}><button className="edit-corner" aria-label={label} onClick={onEdit}><Pencil size={13} /></button>{children}</div>;
 }
 function Leaf({ spell, side, index, onEdit }: { spell: Spell; side: 'lore' | 'formula'; index: number; onEdit: (section: EditSection) => void }) {
-  const lines = runesFor(spell);
   return <article className={`paper-leaf ${side}`} data-testid={`${side}-page`}>
     <div className="page-topline"><span>{side === 'lore' ? 'ARS ARCANA' : 'FORMULAE & OBSERVATIONS'}</span><span>{roman(index + 1)} · {spell.school}</span></div>
     <div className="leaf-scroll">
@@ -34,12 +33,8 @@ function Leaf({ spell, side, index, onEdit }: { spell: Spell; side: 'lore' | 'fo
         <div className="formula-heading"><span className="little-star">✧</span><h2>The incantation</h2><span className="little-star">✧</span></div>
         <p className="formula-subtitle">An arrangement of intent.</p>
         <Editable label="Edit spell code" onEdit={() => onEdit('code')} className="rune-edit">
-          <div className="rune-manuscript" aria-label="Spell code written in runes">
-            <div className="rune-dedication">ᚠ ᚨ ᛚ ᛖ ᚾ &nbsp; ⟡ &nbsp; ᛊ ᛈ ᛁ ᚱ ᚨ</div>
-            {lines.map((line, i) => <div className="rune-line" key={i}><span className="rune-number">{roman(i + 1)}</span><span>{line}</span></div>)}
-            <div className="rune-closing">⸻ &nbsp; ᛖᛊᛏ &nbsp; ⟡ &nbsp; ᚠᛁᚨᛏ &nbsp; ⸻</div>
-          </div>
-          <div className="code-caption"><span>{spell.actions.length} {spell.actions.length === 1 ? 'binding' : 'bindings'} · Spellscript v1</span><span><Pencil size={12} /> Hold to decipher</span></div>
+          <pre className="spell-manuscript" aria-label="Executable spell JavaScript"><code>{spell.code}</code></pre>
+          <div className="code-caption"><span>JavaScript · {spell.code.split('\n').length} lines</span><span><Pencil size={12} /> Edit source</span></div>
         </Editable>
         <div className="manuscript-divider"><span>✧</span></div>
         <Editable label="Edit spell notes" onEdit={() => onEdit('details')}><h3 className="notes-heading">Notes in the margin</h3><div className="spell-notes">{(spell.notes || 'There is still much to discover.').split('\n\n').map((p, i) => <p key={i}>{p}</p>)}</div></Editable>

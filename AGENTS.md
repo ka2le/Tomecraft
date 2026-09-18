@@ -49,11 +49,11 @@ Do not use `npm publish`, switch hosting providers, or introduce another deploym
 ## Adding spells efficiently
 
 - Design spells as a cohesive simulation: consider their interactions with existing materials and effects, not just their isolated appearance. Reuse the shared elemental rules in `src/elements.ts` and terrain behavior in `src/terrain.ts`: water quenches and blocks fire, ice slows combustion and freezes water/grass, and fire spreads through fuel before consuming it. Preserve these interactions when adding or changing spells.
-- `src/spells.ts` contains `starterSpells`, `spellSchema`, `actionSchema`, `starterRevision`, `starterReleases`, and the copyable `AUTHORING_PROMPT` contract. Read the relevant current definitions rather than rediscovering the whole project.
-- Compose existing actions whenever they express the requested spell. Each spell needs a unique stable lowercase/hyphen ID, evocative title/subtitle, school, supported icon, hex color, lore, notes, actions, and blocks.
+- `src/spells.ts` contains `starterSpells`, `spellSchema`, `starterRevision`, and `starterReleases`. `src/authoring.ts` builds `AUTHORING_PROMPT` from current runtime source and spell examples. Read these relevant definitions rather than rediscovering the whole project.
+- Spells are executable JavaScript, not action lists. Each version 2 spell needs a unique stable lowercase/hyphen ID, evocative title/subtitle, school, supported icon, hex color, lore, notes, code, and blocks. Source begins with `export default function cast(api)`. Use the live world and Matter API for new behavior, with managed `effect` and `after` hooks for lifecycle cleanup.
 - When shipping new starter spells, increment `starterRevision` and append a `starterReleases` entry containing the new IDs. `src/storage.ts` uses these releases to add missing spells to existing saved libraries, up to the 100-spell limit. Adding only to `starterSpells` will not reliably deliver spells to returning users.
 - Preserve user-edited spells and existing IDs; do not reset browser storage. Existing starter spells are not overwritten by the additive migration.
-- For a new action type, update its schema, `src/engine.ts` execution/rendering as needed, and `AUTHORING_PROMPT`. Use a focused behavioral check for the new capability.
+- New spell behaviors should be implemented in their JavaScript source without adding interpreter actions. If changing the runtime API, update the authoring contract and use one focused behavioral check. `src/legacySpells.ts` is only for converting old saved action lists; do not extend that format.
 - Saves belong to each browser origin. Local preview and GitHub Pages have separate libraries.
 
 ## UI and project map
@@ -64,7 +64,7 @@ The book and practice chamber fill the viewport. Avoid adding page titles, expla
 - `src/Book.tsx`: book leaves, navigation, bookmarks, editing.
 - `src/Arena.tsx`: canvas, camera, casting input, eight quick slots (keys 1-8).
 - `src/engine.ts`: Matter.js simulation and spell effects.
-- `src/spells.ts`: spell data, schema, runes, authoring instructions.
+- `src/spells.ts`: spell metadata, JavaScript source, schema and imports.
 - `src/storage.ts`: local saves, starter migrations, import/export support.
 - `src/styles.css`, `src/panels.css`: styling; immersive layout overrides are at the end of panels.css.
 - `tests/spells.test.ts`: existing schema/engine tests.

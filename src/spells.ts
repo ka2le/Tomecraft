@@ -1,134 +1,377 @@
 import { z } from 'zod';
+import { actionSchema, legacyCode } from './legacySpells';
+import { compileSpell } from './spellRuntime';
 
 const color = z.string().regex(/^#[0-9a-f]{6}$/i, 'Use a six-digit hex color');
-const delay = z.number().min(0).max(3000).default(0);
-const radius = z.number().min(5).max(500);
-const base = { delay };
-export const actionSchema = z.discriminatedUnion('type', [
-  z.object({ ...base, type: z.literal('water'), amount: z.number().min(100).max(3000).default(1100), duration: z.number().min(500).max(10000).default(3500) }).strict(),
-  z.object({ ...base, type: z.literal('expand'), depth: z.number().int().min(1).max(3).default(2) }).strict(),
-  z.object({ ...base, type: z.literal('grass'), radius: z.number().min(10).max(100).default(35) }).strict(),
-  z.object({ ...base, type: z.literal('freeze'), radius, duration: z.number().min(500).max(60000).default(10000), color: color.default('#9cdeef') }).strict(),
-  z.object({ ...base, type: z.literal('lightning'), radius: radius.default(140), chainRadius: radius.default(240), targets: z.number().int().min(1).max(20).default(5), damage: z.number().min(0).max(1000).default(25), color: color.default('#b9caff') }).strict(),
-  z.object({ ...base, type: z.literal('cloud'), radius, duration: z.number().min(500).max(60000).default(12000) }).strict(),
-  z.object({ ...base, type: z.literal('creature'), color: color.default('#8fc86a'), size: z.number().min(10).max(65).default(32), hp: z.number().min(1).max(1000).default(100), speed: z.number().min(0).max(100).default(24), consumeRadius: z.number().min(0).max(100).default(18), consumeTime: z.number().min(500).max(30000).default(4000), lifetime: z.number().min(0).max(60000).default(0) }).strict(),
-  z.object({ ...base, type: z.literal('light'), color: color.default('#ffb866'), rainbow: z.boolean().default(false), radius, duration: z.number().min(100).max(60000).default(5000), flicker: z.number().min(0).max(2000).default(650) }).strict(),
-  z.object({ ...base, type: z.literal('resize'), radius, factor: z.number().min(0.25).max(3) }).strict(),
-  z.object({ ...base, type: z.literal('spawn'), shape: z.enum(['box', 'circle']).default('box'), material: z.enum(['wood', 'metal', 'stone', 'crystal', 'ice']).default('wood'), count: z.number().int().min(1).max(20).default(1), size: z.number().min(5).max(65).default(28), spread: z.number().min(0).max(220).default(0), color: color.optional(), lifetime: z.number().min(0).max(60000).default(0) }).strict(),
-  z.object({ ...base, type: z.literal('burst'), color, count: z.number().int().min(1).max(160).default(45), speed: z.number().min(0).max(12).default(3), size: z.number().min(1).max(20).default(3), lifetime: z.number().min(100).max(5000).default(900), gravity: z.number().min(-0.2).max(0.2).default(0) }).strict(),
-  z.object({ ...base, type: z.literal('ring'), color, radius, duration: z.number().min(100).max(4000).default(700) }).strict(),
-  z.object({ ...base, type: z.literal('force'), mode: z.enum(['pull', 'push', 'orbit']).default('pull'), radius, strength: z.number().min(0.1).max(3).default(1) }).strict(),
-  z.object({ ...base, type: z.literal('remove'), radius }).strict(),
-  z.object({ ...base, type: z.literal('projectile'), color, speed: z.number().min(2).max(20).default(8), radius: z.number().min(20).max(220).default(110), power: z.number().min(0.1).max(3).default(1), damage: z.number().min(0).max(1000).default(50), particles: z.number().int().min(10).max(160).default(75) }).strict(),
-]);
 export const iconNames = ['flame', 'box', 'orbs', 'magnet', 'eraser', 'sparkles', 'wind', 'moon', 'snowflake', 'bolt', 'shield', 'leaf'] as const;
 const imageSource = z.string().max(1400000).refine(v => /^https?:\/\//i.test(v) || /^data:image\/(png|jpeg|webp|gif);base64,/i.test(v), 'Use an https image URL or upload a PNG, JPEG, WebP, or GIF');
 export const blockSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().max(80), kind: z.literal('text'), content: z.string().min(1).max(3000), placement: z.enum(['before', 'after']) }).strict(),
   z.object({ id: z.string().max(80), kind: z.literal('image'), content: imageSource, caption: z.string().max(200).default(''), placement: z.enum(['before', 'after']) }).strict(),
 ]);
-export const spellSchema = z.object({
-  version: z.literal(1), id: z.string().regex(/^[a-z0-9-]{1,64}$/, 'Use lowercase letters, numbers, and hyphens for the ID'),
+const metadataSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,64}$/, 'Use lowercase letters, numbers, and hyphens for the ID'),
   title: z.string().min(1).max(80), subtitle: z.string().max(100).default('An unwritten possibility'),
   school: z.string().min(1).max(40), icon: z.enum(iconNames), color,
   description: z.string().min(1).max(3000), notes: z.string().max(3000).default(''),
-  actions: z.array(actionSchema).min(1).max(24), blocks: z.array(blockSchema).max(8).default([]),
+  blocks: z.array(blockSchema).max(8).default([]),
+});
+const javascriptSpellSchema = metadataSchema.extend({
+  version: z.literal(2),
+  code: z.string().min(1).max(200000).superRefine((code, ctx) => {
+    try { compileSpell(code); } catch (error) { ctx.addIssue({ code: 'custom', message: String(error instanceof Error ? error.message : error) }); }
+  }),
 }).strict();
-export type Spell = z.infer<typeof spellSchema>;
-export type Action = z.infer<typeof actionSchema>;
+const legacySpellSchema = metadataSchema.extend({ version: z.literal(1), actions: z.array(actionSchema).min(1).max(24) }).strict();
+export const spellSchema = z.union([javascriptSpellSchema, legacySpellSchema.transform(({actions, ...spell}) => ({ ...spell, version: 2 as const, code: legacyCode(actions) }))]);
+export type Spell = z.infer<typeof javascriptSpellSchema>;
 export type Block = z.infer<typeof blockSchema>;
 
 export function parseSpell(source: string): Spell {
-  const clean = source.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const clean = source.trim().replace(/^```(?:javascript|js|json)?\s*/i, '').replace(/\s*```$/, '');
   if (clean.length > 6500000) throw new Error('This spell is too large. Use smaller images.');
   let value: unknown;
-  try { value = JSON.parse(clean); } catch { throw new Error('The spell must be valid JSON. Check commas, quotes, and brackets.'); }
+  if (clean.startsWith('{')) {
+    try { value = JSON.parse(clean); } catch { throw new Error('Invalid JSON backup. Paste the complete JavaScript spell, including its /* @spell … */ header.'); }
+  } else {
+    const match = clean.match(/^\/\*\s*@spell\s+([\s\S]*?)\*\/\s*([\s\S]+)$/);
+    if (!match) throw new Error('Paste a complete JavaScript spell: /* @spell { metadata } */ followed by export default function cast(api) { … }.');
+    try { value = { ...JSON.parse(match[1]), version: 2, code: match[2].trim() }; }
+    catch { throw new Error('The @spell header must contain valid JSON metadata. The JavaScript belongs after the closing */.'); }
+  }
   const result = spellSchema.safeParse(value);
   if (!result.success) throw new Error(result.error.issues.map(i => `${i.path.join('.') || 'spell'}: ${i.message}`).join('\n'));
   return result.data;
 }
 
+export function spellSource(spell: Spell): string {
+  const { code, version: _version, ...metadata } = spell;
+  return `/* @spell\n${JSON.stringify(metadata, null, 2).replace(/\*\//g, '\\u002a/')}\n*/\n${code}`;
+}
+
 export const starterSpells: Spell[] = [
   {
-    version: 1, id: 'fireball', title: 'Fireball', subtitle: 'A little sun, borrowed.', school: 'Evocation', icon: 'flame', color: '#cf7045',
-    description: 'Gather a spark from the space between your hands. Give it a hunger, give it a heading, and let it go.\n\nUpon arrival, the ember blooms — a brief and rather impolite sun.',
-    notes: 'A steady hand is useful. A stone room is wiser.\n\nWood remembers fire. Keep the good furniture out of reach.',
-    actions: [{ type: 'projectile', color: '#f59245', speed: 9, radius: 130, power: 1.6, particles: 100 }], blocks: [],
+    "version": 2,
+    "id": "fireball",
+    "title": "Fireball",
+    "subtitle": "A little sun, borrowed.",
+    "school": "Evocation",
+    "icon": "flame",
+    "color": "#cf7045",
+    "description": "Gather a spark from the space between your hands. Give it a hunger, give it a heading, and let it go.\n\nUpon arrival, the ember blooms — a brief and rather impolite sun.",
+    "notes": "A steady hand is useful. A stone room is wiser.\n\nWood remembers fire. Keep the good furniture out of reach.",
+    "blocks": [],
+    code: `export default function cast({ world, target, caster, effect }) {
+    const ember = { ...caster };
+    const color = '#f59245';
+    const stop = effect({
+        duration: Math.hypot(target.x - caster.x, target.y - caster.y) / 9 * 16.67 + 100,
+        update(dt) {
+            const dx = target.x - ember.x, dy = target.y - ember.y;
+            const distance = Math.hypot(dx, dy), step = 9 * dt / 16.67;
+            if (distance > step) {
+                ember.x += dx / distance * step;
+                ember.y += dy / distance * step;
+                world.burst(ember, color, 3, 0.8, 5, 500);
+                return;
+            }
+            world.burst(target, color, 100, 7, 6, 1100);
+            world.burst(target, '#fff2b5', 18, 5, 3, 600);
+            world.rings.push({ ...target, color, radius: 130, life: 600, total: 600, inward: false });
+            world.force(target, 130, 1.6, 'push');
+            world.terrain.ignite(target, 130);
+            for (const body of world.objects) {
+                if (!world.inRange(body, target, 130)) continue;
+                world.thaw(body, 5000);
+                if (!body.plugin.frozen) world.damage(body, 50);
+                world.ignite(body);
+            }
+            stop();
+        },
+        draw(ctx, _age, reducedMotion) {
+            ctx.shadowColor = color;
+            ctx.shadowBlur = reducedMotion ? 0 : 25;
+            ctx.fillStyle = '#fff3b9';
+            ctx.beginPath();
+            ctx.arc(ember.x, ember.y, 7, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    });
+}`
   },
   {
-    version: 1, id: 'wooden-box', title: 'Humble Crate', subtitle: 'Something from almost nothing.', school: 'Conjuration', icon: 'box', color: '#a7804e',
-    description: 'Persuade the room that there has always been a small wooden crate exactly here.\n\nSturdy, a little crooked, and entirely unremarkable. The most useful magic usually is.',
-    notes: 'Try a few together. A stack of crates makes an excellent argument for learning a fire spell.',
-    actions: [{ type: 'ring', color: '#c5a76b', radius: 65, duration: 600 }, { type: 'spawn', shape: 'box', material: 'wood', size: 34, count: 1, delay: 180 }, { type: 'burst', color: '#d4b878', count: 28, speed: 2, delay: 180 }], blocks: [],
+    "version": 2,
+    "id": "wooden-box",
+    "title": "Humble Crate",
+    "subtitle": "Something from almost nothing.",
+    "school": "Conjuration",
+    "icon": "box",
+    "color": "#a7804e",
+    "description": "Persuade the room that there has always been a small wooden crate exactly here.\n\nSturdy, a little crooked, and entirely unremarkable. The most useful magic usually is.",
+    "notes": "Try a few together. A stack of crates makes an excellent argument for learning a fire spell.",
+    "blocks": [],
+    code: `export default function cast({ world, target, after }) {
+    if (world.rings.length < 100)
+        world.rings.push({ ...target, color: "#c5a76b", radius: 65, life: 600, total: 600, inward: false });
+    after(180, () => {
+        world.spawn({ "shape": "box", "material": "wood", "count": 1, "size": 34, "spread": 0, "lifetime": 0 }, target);
+    });
+    after(180, () => {
+        world.burst(target, "#d4b878", 28, 2, 3, 900, 0);
+    });
+}`
   },
   {
-    version: 1, id: 'iron-orbit', title: 'Iron Choir', subtitle: 'Seven notes in solid metal.', school: 'Conjuration', icon: 'orbs', color: '#728b91',
-    description: 'Call a handful of iron spheres into being. They arrive without ceremony and scatter with a satisfying clatter.\n\nEven a small thing carries considerable weight when properly encouraged.',
-    notes: 'A fine companion to Gravitic Grasp. Pull the choir together, then send it singing across the chamber.',
-    actions: [{ type: 'spawn', shape: 'circle', material: 'metal', size: 11, count: 7, spread: 65 }, { type: 'burst', color: '#a1c2c7', count: 40, speed: 3 }], blocks: [],
+    "version": 2,
+    "id": "iron-orbit",
+    "title": "Iron Choir",
+    "subtitle": "Seven notes in solid metal.",
+    "school": "Conjuration",
+    "icon": "orbs",
+    "color": "#728b91",
+    "description": "Call a handful of iron spheres into being. They arrive without ceremony and scatter with a satisfying clatter.\n\nEven a small thing carries considerable weight when properly encouraged.",
+    "notes": "A fine companion to Gravitic Grasp. Pull the choir together, then send it singing across the chamber.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    world.spawn({ "shape": "circle", "material": "metal", "count": 7, "size": 11, "spread": 65, "lifetime": 0 }, target);
+    world.burst(target, "#a1c2c7", 40, 3, 3, 900, 0);
+}`
   },
   {
-    version: 1, id: 'gravitic-grasp', title: 'Gravitic Grasp', subtitle: 'The world leans closer.', school: 'Kinesis', icon: 'magnet', color: '#8f7aa9',
-    description: 'Tie an invisible thread to everything nearby. Pull.\n\nLoose objects rush toward the chosen point, drawn together by an insistence the world cannot quite refuse.',
-    notes: 'Cast near the edge of a scattered collection. Distance is merely a suggestion, within a certain radius.',
-    actions: [{ type: 'force', mode: 'pull', radius: 300, strength: 1.8 }, { type: 'ring', color: '#b5a0d9', radius: 300, duration: 1000 }, { type: 'burst', color: '#b5a0d9', count: 80, speed: 2, lifetime: 1300 }], blocks: [],
+    "version": 2,
+    "id": "gravitic-grasp",
+    "title": "Gravitic Grasp",
+    "subtitle": "The world leans closer.",
+    "school": "Kinesis",
+    "icon": "magnet",
+    "color": "#8f7aa9",
+    "description": "Tie an invisible thread to everything nearby. Pull.\n\nLoose objects rush toward the chosen point, drawn together by an insistence the world cannot quite refuse.",
+    "notes": "Cast near the edge of a scattered collection. Distance is merely a suggestion, within a certain radius.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    world.force(target, 300, 1.8, "pull");
+    if (world.rings.length < 100)
+        world.rings.push({ ...target, color: "#b5a0d9", radius: 300, life: 1000, total: 1000, inward: true });
+    world.burst(target, "#b5a0d9", 80, 2, 3, 1300, 0);
+}`
   },
   {
-    version: 1, id: 'unmake', title: 'Unmake', subtitle: 'Let there be less.', school: 'Abjuration', icon: 'eraser', color: '#789a88',
-    description: 'Quietly undo what has been done. Every conjured object within the circle loosens its hold on existence and returns to possibility.\n\nAn empty space is a kind of spell, too.',
-    notes: 'The chamber itself is quite stubborn and will remain. Your conjurations are considerably more agreeable.',
-    actions: [{ type: 'ring', color: '#9dc9ac', radius: 155, duration: 850 }, { type: 'remove', radius: 155, delay: 160 }, { type: 'burst', color: '#b9d5be', count: 65, speed: 2, lifetime: 1200, gravity: -0.015, delay: 160 }], blocks: [],
+    "version": 2,
+    "id": "unmake",
+    "title": "Unmake",
+    "subtitle": "Let there be less.",
+    "school": "Abjuration",
+    "icon": "eraser",
+    "color": "#789a88",
+    "description": "Quietly undo what has been done. Every conjured object within the circle loosens its hold on existence and returns to possibility.\n\nAn empty space is a kind of spell, too.",
+    "notes": "The chamber itself is quite stubborn and will remain. Your conjurations are considerably more agreeable.",
+    "blocks": [],
+    code: `export default function cast({ world, target, after }) {
+    if (world.rings.length < 100)
+        world.rings.push({ ...target, color: "#9dc9ac", radius: 155, life: 850, total: 850, inward: false });
+    after(160, () => {
+        world.remove(target, 155);
+    });
+    after(160, () => {
+        world.burst(target, "#b9d5be", 65, 2, 3, 1200, -0.015);
+    });
+}`
   },
   {
-    version: 1, id: 'hungry-slime', title: 'Hungry Slime', subtitle: 'A small, patient appetite.', school: 'Conjuration', icon: 'leaf', color: '#8fc86a',
-    description: 'Call a jelly-green companion into the chamber. It slides toward nearby objects and slowly digests whatever it touches.\n\nIts appetite extends to wood, metal, stone, crystal, and ice.',
-    notes: 'The little bar is its health. One Fireball leaves it half alive; a second finishes the job. Fellow slimes are off the menu.', actions: [{ type: 'creature' }], blocks: [],
+    "version": 2,
+    "id": "hungry-slime",
+    "title": "Hungry Slime",
+    "subtitle": "A small, patient appetite.",
+    "school": "Conjuration",
+    "icon": "leaf",
+    "color": "#8fc86a",
+    "description": "Call a jelly-green companion into the chamber. It slides toward nearby objects and slowly digests whatever it touches.\n\nIts appetite extends to wood, metal, stone, crystal, and ice.",
+    "notes": "The little bar is its health. One Fireball leaves it half alive; a second finishes the job. Fellow slimes are off the menu.",
+    "blocks": [],
+    code: `export default function cast({ world, target, Matter }) {
+    if (world.objects.length >= 250)
+        return;
+    if (!world.terrain.contains(target, 32 + 5))
+        return;
+    const body = Matter.Bodies.circle(target.x, target.y, 32, { frictionAir: .12, restitution: .1, inertia: Infinity });
+    body.plugin = { material: 'slime', color: "#8fc86a", size: 32, shape: 'circle', expires: 0, creature: { hp: 100, maxHp: 100, speed: 24, consumeRadius: 18, consumeTime: 4000, meals: new Map() } };
+    Matter.Composite.add(world.engine.world, body);
+}`
   },
   {
-    version: 1, id: 'rainbow-light', title: 'Prismatic Wisp', subtitle: 'Five seconds of borrowed color.', school: 'Illumination', icon: 'sparkles', color: '#c39be9',
-    description: 'Suspend a soft light in the air. Its glow flows through the rainbow, bathing the stone in shifting color.\n\nAfter five seconds, it flickers into darkness.',
-    notes: 'A continuous glow, without a single wandering spark.', actions: [{ type: 'light', rainbow: true, radius: 150, duration: 5000, flicker: 650 }], blocks: [],
+    "version": 2,
+    "id": "rainbow-light",
+    "title": "Prismatic Wisp",
+    "subtitle": "Five seconds of borrowed color.",
+    "school": "Illumination",
+    "icon": "sparkles",
+    "color": "#c39be9",
+    "description": "Suspend a soft light in the air. Its glow flows through the rainbow, bathing the stone in shifting color.\n\nAfter five seconds, it flickers into darkness.",
+    "notes": "A continuous glow, without a single wandering spark.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    if (world.lights.length >= 32)
+        return;
+    world.lights.push({ ...target, started: world.time, settings: {
+            color: '#ffb866', rainbow: true, radius: 150,
+            duration: 5000, flicker: 650
+        } });
+}`
   },
   {
-    version: 1, id: 'shrink', title: 'Diminish', subtitle: 'A little less of everything.', school: 'Transmutation', icon: 'moon', color: '#89bcd1',
-    description: 'Halve the size of nearby conjurations, including slimes and glowing lights. Physical objects shrink in substance; lights draw their glow inward.',
-    notes: 'Small creatures retain their health and appetite. Repeated casting has its limits.', actions: [{ type: 'resize', radius: 130, factor: 0.5 }, { type: 'ring', color: '#89bcd1', radius: 130, duration: 650 }], blocks: [],
+    "version": 2,
+    "id": "shrink",
+    "title": "Diminish",
+    "subtitle": "A little less of everything.",
+    "school": "Transmutation",
+    "icon": "moon",
+    "color": "#89bcd1",
+    "description": "Halve the size of nearby conjurations, including slimes and glowing lights. Physical objects shrink in substance; lights draw their glow inward.",
+    "notes": "Small creatures retain their health and appetite. Repeated casting has its limits.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+    {
+        for (const body of world.objects)
+            if (world.inRange(body, target, 130))
+                world.resize(body, body.plugin.size * 0.5);
+        for (const light of world.lights)
+            if (Math.hypot(light.x - target.x, light.y - target.y) <= 130 + light.settings.radius)
+                light.settings.radius = clamp(light.settings.radius * 0.5, 5, 500);
+    }
+    {
+        if (world.rings.length < 100)
+            world.rings.push({ ...target, color: "#89bcd1", radius: 130, life: 650, total: 650, inward: false });
+    }
+}`
   },
   {
-    version: 1, id: 'enlarge', title: 'Magnify', subtitle: 'Make room for possibility.', school: 'Transmutation', icon: 'orbs', color: '#d4b574',
-    description: 'Double the size of nearby conjurations, including slimes and glowing lights. Physical objects grow in substance; lights spread their glow farther.',
-    notes: 'A larger slime is still two Fireballs away from oblivion. No conjuration can grow beyond the chamber’s limits.', actions: [{ type: 'resize', radius: 130, factor: 2 }, { type: 'ring', color: '#d4b574', radius: 130, duration: 650 }], blocks: [],
+    "version": 2,
+    "id": "enlarge",
+    "title": "Magnify",
+    "subtitle": "Make room for possibility.",
+    "school": "Transmutation",
+    "icon": "orbs",
+    "color": "#d4b574",
+    "description": "Double the size of nearby conjurations, including slimes and glowing lights. Physical objects grow in substance; lights spread their glow farther.",
+    "notes": "A larger slime is still two Fireballs away from oblivion. No conjuration can grow beyond the chamber’s limits.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+    {
+        for (const body of world.objects)
+            if (world.inRange(body, target, 130))
+                world.resize(body, body.plugin.size * 2);
+        for (const light of world.lights)
+            if (Math.hypot(light.x - target.x, light.y - target.y) <= 130 + light.settings.radius)
+                light.settings.radius = clamp(light.settings.radius * 2, 5, 500);
+    }
+    {
+        if (world.rings.length < 100)
+            world.rings.push({ ...target, color: "#d4b574", radius: 130, life: 650, total: 650, inward: false });
+    }
+}`
   },
   {
-    version: 1, id: 'ice-prison', title: 'Ice Prison', subtitle: 'Hold that thought.', school: 'Abjuration', icon: 'snowflake', color: '#9cdeef',
-    description: 'Seal nearby objects and creatures in still, crystalline ice. For ten seconds, nothing within can move or feed.\n\nThe prison thins as it thaws. Fire melts it faster.',
-    notes: 'Each Fireball melts five seconds of ice. A surviving shell shields its contents from that blast.', actions: [{ type: 'freeze', radius: 155, duration: 10000 }], blocks: [],
+    "version": 2,
+    "id": "ice-prison",
+    "title": "Ice Prison",
+    "subtitle": "Hold that thought.",
+    "school": "Abjuration",
+    "icon": "snowflake",
+    "color": "#9cdeef",
+    "description": "Seal nearby objects and creatures in still, crystalline ice. For ten seconds, nothing within can move or feed.\n\nThe prison thins as it thaws. Fire melts it faster.",
+    "notes": "Each Fireball melts five seconds of ice. A surviving shell shields its contents from that blast.",
+    "blocks": [],
+    code: `export default function cast({ world, target, Matter }) {
+    world.terrain.freeze(target, 155, 10000);
+    for (const body of world.objects)
+        if (world.inRange(body, target, 155)) {
+            body.plugin.frozen = { remaining: 10000, total: 10000, color: "#9cdeef" };
+            if (!body.isStatic)
+                Matter.Body.setStatic(body, true);
+        }
+}`
   },
   {
-    version: 1, id: 'chain-lightning', title: 'Chain Lightning', subtitle: 'One bright thought leads to another.', school: 'Evocation', icon: 'bolt', color: '#b9caff',
-    description: 'A bolt leaps to the nearest visible target, then arcs through as many as four more nearby objects or creatures.\n\nEach creature takes twenty-five damage: half a Fireball’s bite.',
-    notes: 'Each target is struck once per cast. Four hits defeat a healthy slime. The chain cannot see through black mist.', actions: [{ type: 'lightning', targets: 5, damage: 25 }], blocks: [],
+    "version": 2,
+    "id": "chain-lightning",
+    "title": "Chain Lightning",
+    "subtitle": "One bright thought leads to another.",
+    "school": "Evocation",
+    "icon": "bolt",
+    "color": "#b9caff",
+    "description": "A bolt leaps to the nearest visible target, then arcs through as many as four more nearby objects or creatures.\n\nEach creature takes twenty-five damage: half a Fireball’s bite.",
+    "notes": "Each target is struck once per cast. Four hits defeat a healthy slime. The chain cannot see through black mist.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    world.lightning({ "radius": 140, "chainRadius": 240, "targets": 5, "damage": 25, "color": "#b9caff" }, target);
+}`
   },
   {
-    version: 1, id: 'black-mist', title: 'Black Mist', subtitle: 'Let the room forget.', school: 'Illusion', icon: 'wind', color: '#777184',
-    description: 'Gather a dense, black gaseous cloud. It hides what lies inside and blocks a creature’s view through it.\n\nOver twelve seconds, its curling edges slowly dissolve.',
-    notes: 'Slimes lose sight of concealed food. Chain Lightning loses its path; an aimed Fireball can still pass through.', actions: [{ type: 'cloud', radius: 190, duration: 12000 }], blocks: [],
+    "version": 2,
+    "id": "black-mist",
+    "title": "Black Mist",
+    "subtitle": "Let the room forget.",
+    "school": "Illusion",
+    "icon": "wind",
+    "color": "#777184",
+    "description": "Gather a dense, black gaseous cloud. It hides what lies inside and blocks a creature’s view through it.\n\nOver twelve seconds, its curling edges slowly dissolve.",
+    "notes": "Slimes lose sight of concealed food. Chain Lightning loses its path; an aimed Fireball can still pass through.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    if (world.clouds.length < 24)
+        world.clouds.push({ ...target, radius: 190, duration: 12000, started: world.time });
+}`
   },
   {
-    version: 1, id: 'wellspring', title: 'Wellspring', subtitle: 'The stone remembers the river.', school: 'Conjuration', icon: 'wind', color: '#65b9cf',
-    description: 'Open a spring beneath the floor. Clear water wells up and spreads into a rippling pool, dividing around crates and finding its way through narrow gaps.',
-    notes: 'A finite spring feeds a slow, shallow flood, then closes. Water dries over time, extinguishes fire, and freezes under Ice Prison. Cast again to replenish it.', actions: [{ type: 'water' }], blocks: [],
+    "version": 2,
+    "id": "wellspring",
+    "title": "Wellspring",
+    "subtitle": "The stone remembers the river.",
+    "school": "Conjuration",
+    "icon": "wind",
+    "color": "#65b9cf",
+    "description": "Open a spring beneath the floor. Clear water wells up and spreads into a rippling pool, dividing around crates and finding its way through narrow gaps.",
+    "notes": "A finite spring feeds a slow, shallow flood, then closes. Water dries over time, extinguishes fire, and freezes under Ice Prison. Cast again to replenish it.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    world.terrain.addWater(target, 1100, 3500);
+}`
   },
   {
-    version: 1, id: 'unfold-chamber', title: 'Unfold the Chamber', subtitle: 'There is always another room.', school: 'Transmutation', icon: 'box', color: '#c2ae7c',
-    description: 'Touch the inside of a chamber wall and persuade the space beyond it to exist. Six new floor squares unfold outwards, opening a small alcove exactly where you cast.',
-    notes: 'Aim within half a floor square of an exposed edge. Works on new alcoves too. Reset restores the original room. The chamber accepts up to 240 extra squares.', actions: [{ type: 'expand', depth: 2 }], blocks: [],
+    "version": 2,
+    "id": "unfold-chamber",
+    "title": "Unfold the Chamber",
+    "subtitle": "There is always another room.",
+    "school": "Transmutation",
+    "icon": "box",
+    "color": "#c2ae7c",
+    "description": "Touch the inside of a chamber wall and persuade the space beyond it to exist. Six new floor squares unfold outwards, opening a small alcove exactly where you cast.",
+    "notes": "Aim within half a floor square of an exposed edge. Works on new alcoves too. Reset restores the original room. The chamber accepts up to 240 extra squares.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    if (!world.terrain.edge(target)) {
+        throw new Error('Aim within half a floor square of an exposed edge.');
+    }
+    world.terrain.expand(target, 2);
+}`
   },
   {
-    version: 1, id: 'wandering-meadow', title: 'Wandering Meadow', subtitle: 'Give the wilderness a foothold.', school: 'Verdancy', icon: 'leaf', color: '#8bb15d',
-    description: 'Wake a handful of seeds between the stones. Fine blades unfurl, sway, and send runners into the neighboring cracks. Left alone, the meadow slowly claims more of the chamber in ragged, branching patches.',
-    notes: 'Growth follows open floor around obstacles. Fire runs through dry grass; water quenches it and ice arrests its growth. Unmake clears roots and blades.', actions: [{ type: 'grass' }], blocks: [],
-  },
+    "version": 2,
+    "id": "wandering-meadow",
+    "title": "Wandering Meadow",
+    "subtitle": "Give the wilderness a foothold.",
+    "school": "Verdancy",
+    "icon": "leaf",
+    "color": "#8bb15d",
+    "description": "Wake a handful of seeds between the stones. Fine blades unfurl, sway, and send runners into the neighboring cracks. Left alone, the meadow slowly claims more of the chamber in ragged, branching patches.",
+    "notes": "Growth follows open floor around obstacles. Fire runs through dry grass; water quenches it and ice arrests its growth. Unmake clears roots and blades.",
+    "blocks": [],
+    code: `export default function cast({ world, target }) {
+    world.terrain.plant(target, 35, world.objects);
+}`
+  }
 ].map(s => spellSchema.parse(s));
 
 // Add release entries here so saved tomes receive new spells without restoring deleted ones.
@@ -139,53 +382,10 @@ export const starterReleases = [
 ];
 export const starterRevision = starterReleases.at(-1)!.revision;
 
-const runeAlphabet = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛈᛇᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
-export function runesFor(spell: Spell): string[] {
-  return spell.actions.map(a => {
-    const code = JSON.stringify(a);
-    let hash = 0;
-    for (let i = 0; i < code.length; i++) hash = ((hash << 5) - hash + code.charCodeAt(i)) | 0;
-    const name = a.type.toUpperCase().split('').map(c => runeAlphabet[(c.charCodeAt(0) - 65) % runeAlphabet.length]).join('');
-    const values = Object.values(a).filter(v => typeof v === 'number').map(v => `${v < 0 ? '−' : ''}${Math.round(Math.abs(v) * 1000).toString(24).split('').map(c => runeAlphabet[parseInt(c, 24)]).join('')}`).join(' · ');
-    return `${name}  ⟡  ${values}  :  ${runeAlphabet[Math.abs(hash) % runeAlphabet.length]}`;
-  });
-}
-
 export function newSpell(): Spell {
-  return spellSchema.parse({ version: 1, id: `spell-${Date.now().toString(36)}`, title: 'A New Wonder', subtitle: 'Every great spell begins with a question.', school: 'Evocation', icon: 'sparkles', color: '#bb91c9', description: 'A scattering of violet starlight, called into the world by a curious hand.', notes: 'Make it your own.', actions: [{ type: 'burst', color: '#c5a0e5', count: 70, speed: 4 }, { type: 'ring', color: '#c5a0e5', radius: 100, duration: 900 }] });
+  return spellSchema.parse({ version: 2, id: `spell-${Date.now().toString(36)}`, title: 'A New Wonder', subtitle: 'Every great spell begins with a question.', school: 'Evocation', icon: 'sparkles', color: '#bb91c9', description: 'A scattering of violet starlight, called into the world by a curious hand.', notes: 'Make it your own.', code: `export default function cast({ world, target }) {
+  world.burst(target, '#c5a0e5', 70, 4);
+  world.rings.push({ ...target, color: '#c5a0e5', radius: 100,
+    life: 900, total: 900, inward: false });
+}` });
 }
-
-export const AUTHORING_PROMPT = `You are a spellwright for Tomecraft, a static React spell-crafting game with a top-down, zero-gravity Matter.js arena. Write one original spell for the description I provide. Return ONLY one JSON code block that can be pasted into "Inscribe a spell → Spell code". This is a declarative spell language, NOT JavaScript. Do not use functions, HTML, imports, or unknown properties.
-
-Spell format (all fields shown except blocks are required):
-{ "version": 1, "id": "unique-kebab-case", "title": "Spell name", "subtitle": "A short poetic line", "school": "Evocation", "icon": "flame", "color": "#cf7045", "description": "Readable lore and what this spell does. Use \\n for paragraphs.", "notes": "A handwritten observation", "actions": [], "blocks": [] }
-
-Icons: flame, box, orbs, magnet, eraser, sparkles, wind, moon, snowflake, bolt, shield, leaf. Colors MUST be six-digit hex. School may be any short name. Use 1–24 actions. Every action has optional delay in milliseconds, 0–3000, measured from the moment of casting. Actions with equal delays run in array order. Every action is centered at the point the player taps, except projectiles which travel there from the caster near the chamber's south wall. The room starts at 1400 × 1000 world units and can expand in 100-unit tiles.
-
-Actions (include "type" and only the listed properties):
-• water: amount 100–3000 (default 1100), duration 500–10000 ms (default 3500). Emits a finite amount of shallow water over time. Depth pressure and damped flow spread it around solid objects and walls. The finite spring closes after duration. Water evaporates over tens of seconds, quenches burning grass and wood, and blocks flame spread. Ice freezes the water in place until thawed. Up to 12000 total volume units and 16 sources.
-• expand: depth 1–3 floor tiles (default 2). Cast within 50 units of an exposed inside edge to add a three-tile-wide alcove outwards. Tiles are 100 units; at most 240 extra tiles. Invalid casts are rejected. Reset restores the room.
-• grass: radius 10–100 (default 35). Seeds a meadow that slowly spreads through irregular runners around obstacles. Individual blades mature and sway; up to 8000 tufts. Fire spreads to nearby grass and wood before consuming grass over about 6.5 seconds. Water extinguishes it; ice stops growth and slows ignition and burning.
-• freeze: required radius 5–500, duration 500–60000 ms (default 10000), optional color (default #9cdeef). Encases intersecting physical objects and creatures in ice, locking position and stopping feeding. Also freezes water flow and grass growth. Shells slowly thaw; recasting refreshes duration. Frozen objects cannot be eaten or moved by forces, but can be resized or unmade. Fire projectiles melt 5000 ms of ice per hit; a remaining shell blocks blast damage and greatly slows ignition and burning. Lightning damages creatures through ice without thawing it.
-• lightning: radius 5–500 (default 140, first target around aim point), chainRadius 5–500 (default 240, each subsequent jump), targets 1–20 (default 5), damage 0–1000 (default 25), optional color (default #b9caff). Instantly hits the nearest visible physical object, then chains to the nearest unhit object in range. Each creature takes damage once per cast. Non-creature objects conduct but take no damage. First arc starts at caster; clouds block every arc. Default damage is half Fireball damage. At most 100 visible arcs.
-• cloud: required radius 5–500, duration 500–60000 ms (default 12000). Dense black smoke hides objects and lights, blocks creature sight and lightning line of sight, and gradually shrinks to nothing. Concealment follows the dense cores of overlapping, slowly rolling smoke lobes; the irregular edge is wispy. Creatures wander when they cannot see food and cannot eat concealed food. Aimed projectiles, area spells, and collisions still work inside. At most 24 clouds.
-• creature: summons a physical slime with a health bar. Optional color (default #8fc86a), size 10–65 (default 32), hp 1–1000 (default 100), speed 0–100 world units/second (default 24), consumeRadius 0–100 beyond its body (default 18), consumeTime 500–30000 ms per object (default 4000), lifetime 0–60000 ms (0 persists). Seeks the nearest visible, unfrozen non-creature object, slowly shrinks and consumes nearby objects of any material, and wanders if none remain. Does not eat creatures or walls. Projectile damage reduces health; zero health removes it. No regeneration. Default slime survives exactly one default Fireball and dies to the second hit.
-• light: optional color (default #ffb866), rainbow boolean (default false), required radius 5–500, duration 100–60000 ms (default 5000), flicker 0–2000 ms (default 650, included in duration). A stationary continuous glow, not particles. Rainbow cycles through all hues in five seconds; flicker fades it out at the end. At most 32 active lights. Resize also scales lights (radius clamped to 5–500); Unmake affects physical objects only.
-• resize: required radius 5–500 and factor 0.25–3. Immediately scales all physical objects and light glows intersecting the area, including creatures. Factors below 1 shrink, above 1 enlarge. Both collision geometry and appearance change; final size is clamped to 4–120 world units. Health, speed, and consumption settings stay unchanged. Repeated casts compound; changes persist.
-• spawn: shape "box" | "circle" (default box), material "wood" | "metal" | "stone" | "crystal" | "ice", count 1–20, size 5–65 (circle radius / half box width), spread 0–220, optional color, lifetime 0–60000 ms (0 persists). All spawned objects have physical collisions; wood ignites on fireball impact and chars over about nine seconds before destruction. Flames spread between dry grass and wood; water quenches them and ice slows them. Solid ice melts into water when heated.
-• burst: required color; count 1–160, speed 0–12, size 1–20, lifetime 100–5000 ms, gravity -0.2–0.2. Creates glowing particles.
-• ring: required color and radius 5–500; duration 100–4000 ms. Animated circle; contracts when this spell contains a pull force, otherwise expands.
-• force: mode "pull" | "push" | "orbit"; required radius 5–500; strength 0.1–3. Applies an impulse to existing objects, creatures, and liquid water in the area. Frozen objects stay locked until thawed.
-• remove: required radius 5–500. Removes all conjured objects, water, and grass intersecting the area; never the walls.
-• projectile: required color; speed 2–20, radius 20–220 (explosion), power 0.1–3, damage 0–1000 (default 50, applied once to each creature in the blast), particles 10–160. Travels to target, explodes, pushes objects and ignites dry grass and wooden objects in the blast. Each blast also melts 5000 ms of ice; any remaining shell prevents blast damage and slows ignition and burning. Sustained fire spreads through nearby dry fuel and hurts unprotected creatures. Other actions are delayed from cast time, NOT projectile arrival.
-
-Optional blocks, at most 8, render before or after the main content:
-{ "id": "unique-note", "kind": "text", "content": "Extra observation", "placement": "before" | "after" }
-{ "id": "unique-image", "kind": "image", "content": "https://an-actual-image-url", "caption": "Caption", "placement": "before" | "after" }
-Omit images unless I supply a real URL. User can upload images later.
-
-Keep lore elegant and concise, describe only supported behavior, and combine several actions for distinctive effects. Constraints: 250 physical objects, 2000 particles, and 12 pending casts per chamber. No arbitrary code executes. Runes are rendered automatically from action names and numeric parameters; never supply a rune field.
-
-Example actions: [{"type":"spawn","material":"ice","shape":"circle","size":16,"count":8,"spread":85,"lifetime":15000},{"type":"burst","color":"#a2dcf5","count":70,"speed":3},{"type":"force","mode":"push","radius":120,"strength":1.2,"delay":250}]
-
-Create this spell: [describe your spell here]`;
